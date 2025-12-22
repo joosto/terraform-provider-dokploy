@@ -184,6 +184,7 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 
 	plan.ID = types.StringValue(createdDomain.ID)
+	plan.ServiceName = types.StringValue(createdDomain.ServiceName)
 
 	// Trigger Redeploy if requested
 	if !plan.RedeployOnUpdate.IsNull() && plan.RedeployOnUpdate.ValueBool() {
