@@ -1087,7 +1087,7 @@ func (c *DokployClient) UpdateApplicationEnv(appID string, updateFn func(envMap 
 		if verifyApp.Env == newEnvStr {
 			return nil // Success
 		}
-		lastErr = fmt.Errorf("environment update conflict, retrying...")
+		lastErr = fmt.Errorf("environment update conflict, retrying")
 	}
 	return lastErr
 }
