@@ -71,7 +71,7 @@ resource "github_repository_deploy_key" "app_key" {
 # Deploy an Application (Private Repo)
 resource "dokploy_application" "web_app" {
   name                  = "web-frontend"
-  project_id            = dokploy_project.main.id 
+  project_id            = dokploy_project.main.id
   environment_id        = dokploy_environment.staging.id
   # Use Custom Git settings for private repo via SSH
   custom_git_url        = var.custom_git_url
@@ -81,7 +81,7 @@ resource "dokploy_application" "web_app" {
   dockerfile_path       = "./Dockerfile"
   auto_deploy           = true
   deploy_on_create      = true
-  
+
   # Ensure key is added to GitHub before deploying app
   depends_on = [github_repository_deploy_key.app_key]
 }
@@ -96,12 +96,13 @@ resource "dokploy_domain" "app_domain" {
   redeploy_on_update  = true
 }
 
-# Set Environment Variables for the Application
-resource "dokploy_environment_variable" "db_url" {
+
+
+resource "dokploy_environment_variables" "app_vars" {
   application_id = dokploy_application.web_app.id
-  key            = "DATABASE_URL"
-  value          = "postgres://user:${var.db_password}@${dokploy_database.postgres.internal_port}/db"
-  scope          = "runtime"
+  variables = {                                                                     
+    "DATABASE_URL" = "postgres://user:${var.db_password}@${dokploy_database.postgres.name}:${dokploy_database.postgres.internal_port}/db"                                                                                                                                                            
+  }   
 }
 
 # Deploy a Docker Compose resource
@@ -126,11 +127,6 @@ resource "dokploy_domain" "compose_domain" {
   port                = 3000
   https               = false
   redeploy_on_update  = true
-}
-
-output "deploy_public_key" {
-  value = tls_private_key.pk.public_key_openssh
-  description = "The public key added to GitHub"
 }
 
 output "generated_domain" {

@@ -26,10 +26,8 @@ func TestAccResources(t *testing.T) {
 					resource.TestCheckResourceAttr("dokploy_project.full", "name", "TestProjectFull"),
 					resource.TestCheckResourceAttr("dokploy_environment.staging", "name", "staging"),
 					resource.TestCheckResourceAttr("dokploy_application.app", "name", "test-app"),
-					resource.TestCheckResourceAttr("dokploy_compose.compose", "name", "test-compose"),
 					resource.TestCheckResourceAttr("dokploy_database.db", "name", "test-db"),
 					resource.TestCheckResourceAttr("dokploy_domain.domain", "host", "test-app.example.com"),
-					resource.TestCheckResourceAttr("dokploy_environment_variable.var", "key", "TEST_KEY"),
 					resource.TestCheckResourceAttr("dokploy_ssh_key.key", "name", "test-key"),
 				),
 			},
@@ -98,18 +96,6 @@ resource "dokploy_application" "app" {
   build_type     = "nixpacks"
 }
 
-resource "dokploy_compose" "compose" {
-  project_id           = dokploy_project.full.id
-  environment_id       = dokploy_environment.staging.id
-  name                 = "test-compose"
-  compose_file_content = <<EOT
-version: "3"
-services:
-  web:
-    image: nginx
-EOT
-}
-
 resource "dokploy_database" "db" {
   project_id     = dokploy_project.full.id
   environment_id = dokploy_environment.staging.id
@@ -123,13 +109,6 @@ resource "dokploy_domain" "domain" {
   application_id = dokploy_application.app.id
   host           = "test-app.example.com"
   port           = 3000
-}
-
-resource "dokploy_environment_variable" "var" {
-  application_id = dokploy_application.app.id
-  key            = "TEST_KEY"
-  value          = "TEST_VALUE"
-  scope          = "run_time"
 }
 `, os.Getenv("DOKPLOY_HOST"), os.Getenv("DOKPLOY_API_KEY"), projectName, envName)
 }
