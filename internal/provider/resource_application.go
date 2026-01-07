@@ -337,82 +337,156 @@ func (r *ApplicationResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 
+	// Required fields
 	state.Name = types.StringValue(app.Name)
+	// ProjectID is required but might not be in API response, preserve from state if missing
 	if app.ProjectID != "" {
 		state.ProjectID = types.StringValue(app.ProjectID)
 	}
+	// If ProjectID is empty in API response, keep existing state value (don't overwrite)
+	
+	// Optional fields
 	if app.EnvironmentID != "" {
 		state.EnvironmentID = types.StringValue(app.EnvironmentID)
+	} else {
+		state.EnvironmentID = types.StringNull()
 	}
+	
+	// Computed fields - always set them, but preserve state if API returns empty
 	if app.RepositoryURL != "" {
 		state.RepositoryURL = types.StringValue(app.RepositoryURL)
+	} else if state.RepositoryURL.IsNull() {
+		state.RepositoryURL = types.StringValue("")
 	}
+	// else keep existing state value
+	
 	if app.Branch != "" {
 		state.Branch = types.StringValue(app.Branch)
+	} else if state.Branch.IsNull() {
+		state.Branch = types.StringValue("")
 	}
+	
 	if app.BuildType != "" {
 		state.BuildType = types.StringValue(app.BuildType)
+	} else if state.BuildType.IsNull() {
+		state.BuildType = types.StringValue("")
 	}
+	
 	if app.DockerfilePath != "" {
 		state.DockerfilePath = types.StringValue(app.DockerfilePath)
+	} else if state.DockerfilePath.IsNull() {
+		state.DockerfilePath = types.StringValue("")
 	}
+	
 	if app.DockerContextPath != "" {
 		state.DockerContextPath = types.StringValue(app.DockerContextPath)
+	} else if state.DockerContextPath.IsNull() {
+		state.DockerContextPath = types.StringValue("")
 	}
+	
 	if app.DockerBuildStage != "" {
 		state.DockerBuildStage = types.StringValue(app.DockerBuildStage)
+	} else if state.DockerBuildStage.IsNull() {
+		state.DockerBuildStage = types.StringValue("")
 	}
+	
+	if app.SourceType != "" {
+		state.SourceType = types.StringValue(app.SourceType)
+	} else if state.SourceType.IsNull() {
+		state.SourceType = types.StringValue("")
+	}
+	
+	// AutoDeploy is Computed boolean - always set from API
+	state.AutoDeploy = types.BoolValue(app.AutoDeploy)
 
-	// Map new fields
-	// Note: API might return empty string for nulls, check if we need to preserve state
+	// Optional custom git fields
 	if app.CustomGitUrl != "" {
 		state.CustomGitUrl = types.StringValue(app.CustomGitUrl)
+	} else if !state.CustomGitUrl.IsNull() {
+		state.CustomGitUrl = types.StringNull()
 	}
 	if app.CustomGitBranch != "" {
 		state.CustomGitBranch = types.StringValue(app.CustomGitBranch)
+	} else if !state.CustomGitBranch.IsNull() {
+		state.CustomGitBranch = types.StringNull()
 	}
 	if app.CustomGitSSHKeyId != "" {
 		state.CustomGitSSHKeyID = types.StringValue(app.CustomGitSSHKeyId)
+	} else if !state.CustomGitSSHKeyID.IsNull() {
+		state.CustomGitSSHKeyID = types.StringNull()
 	}
 	if app.CustomGitBuildPath != "" {
 		state.CustomGitBuildPath = types.StringValue(app.CustomGitBuildPath)
-	}
-	if app.SourceType != "" {
-		state.SourceType = types.StringValue(app.SourceType)
+	} else if !state.CustomGitBuildPath.IsNull() {
+		state.CustomGitBuildPath = types.StringNull()
 	}
 	if app.Username != "" {
 		state.Username = types.StringValue(app.Username)
+	} else if !state.Username.IsNull() {
+		state.Username = types.StringNull()
 	}
+	// Don't read password back
 
-	state.AutoDeploy = types.BoolValue(app.AutoDeploy)
-	// Don't read password back if not returned or hashed
-
-	// Map GitHub Provider fields
-	if app.GithubRepository != "" {
-		state.GithubRepository = types.StringValue(app.GithubRepository)
-	}
-	if app.GithubOwner != "" {
-		state.GithubOwner = types.StringValue(app.GithubOwner)
-	}
-	if app.GithubBranch != "" {
-		state.GithubBranch = types.StringValue(app.GithubBranch)
-	}
-	if app.GithubBuildPath != "" {
-		state.GithubBuildPath = types.StringValue(app.GithubBuildPath)
-	}
-	if app.GithubID != "" {
-		state.GithubID = types.StringValue(app.GithubID)
-	}
-	if app.TriggerType != "" {
-		state.TriggerType = types.StringValue(app.TriggerType)
-	}
-	if len(app.GithubWatchPaths) > 0 {
-		watchPathsList, diags := types.ListValueFrom(ctx, types.StringType, app.GithubWatchPaths)
-		if !diags.HasError() {
-			state.GithubWatchPaths = watchPathsList
+	// Optional GitHub Provider fields - only update if they were set in config
+	// If state has a value (was configured), update it based on API response
+	// If state was null (not configured), keep it null
+	if !state.GithubRepository.IsNull() {
+		if app.GithubRepository != "" {
+			state.GithubRepository = types.StringValue(app.GithubRepository)
+		} else {
+			state.GithubRepository = types.StringNull()
 		}
 	}
-	state.EnableSubmodules = types.BoolValue(app.EnableSubmodules)
+	if !state.GithubOwner.IsNull() {
+		if app.GithubOwner != "" {
+			state.GithubOwner = types.StringValue(app.GithubOwner)
+		} else {
+			state.GithubOwner = types.StringNull()
+		}
+	}
+	if !state.GithubBranch.IsNull() {
+		if app.GithubBranch != "" {
+			state.GithubBranch = types.StringValue(app.GithubBranch)
+		} else {
+			state.GithubBranch = types.StringNull()
+		}
+	}
+	if !state.GithubBuildPath.IsNull() {
+		if app.GithubBuildPath != "" {
+			state.GithubBuildPath = types.StringValue(app.GithubBuildPath)
+		} else {
+			state.GithubBuildPath = types.StringNull()
+		}
+	}
+	if !state.GithubID.IsNull() {
+		if app.GithubID != "" {
+			state.GithubID = types.StringValue(app.GithubID)
+		} else {
+			state.GithubID = types.StringNull()
+		}
+	}
+	if !state.TriggerType.IsNull() {
+		if app.TriggerType != "" {
+			state.TriggerType = types.StringValue(app.TriggerType)
+		} else {
+			state.TriggerType = types.StringNull()
+		}
+	}
+	if !state.GithubWatchPaths.IsNull() {
+		if len(app.GithubWatchPaths) > 0 {
+			watchPathsList, diags := types.ListValueFrom(ctx, types.StringType, app.GithubWatchPaths)
+			if !diags.HasError() {
+				state.GithubWatchPaths = watchPathsList
+			}
+		} else {
+			state.GithubWatchPaths = types.ListNull(types.StringType)
+		}
+	}
+	
+	// EnableSubmodules - optional boolean, only update if it was set in config
+	if !state.EnableSubmodules.IsNull() {
+		state.EnableSubmodules = types.BoolValue(app.EnableSubmodules)
+	}
 
 	diags = resp.State.Set(ctx, state)
 	resp.Diagnostics.Append(diags...)

@@ -704,6 +704,18 @@ func (c *DokployClient) CreateDatabase(projectID, environmentID, name, dbType, p
 		return nil, err
 	}
 
+	// Try to parse the response as a database object first
+	var directResult Database
+	if err := json.Unmarshal(resp, &directResult); err == nil && directResult.PostgresID != "" {
+		// Direct response with postgresId
+		directResult.ID = directResult.PostgresID
+		if directResult.Type == "" {
+			directResult.Type = dbType
+		}
+		return &directResult, nil
+	}
+
+	// Check if response is just "true" (boolean success indicator)
 	if string(resp) == "true" {
 		project, err := c.GetProject(projectID)
 		if err != nil {
@@ -741,16 +753,36 @@ func (c *DokployClient) CreateDatabase(projectID, environmentID, name, dbType, p
 						if db.RedisID != "" {
 							id = db.RedisID
 						}
-						if id != "" {
-							db.ID = id
+
+						// If no type-specific ID, try the generic databaseId field
+						if id == "" && db.ID != "" {
+							id = db.ID
 						}
 
-						if db.Type == "" {
-							db.Type = dbType
+						// Create a result database with the ID explicitly set
+						result := Database{
+							ID:            id,
+							Name:          db.Name,
+							AppName:       db.AppName,
+							Type:          dbType,
+							ProjectID:     db.ProjectID,
+							EnvironmentID: db.EnvironmentID,
+							Version:       db.Version,
+							DockerImage:   db.DockerImage,
+							ExternalPort:  db.ExternalPort,
+							InternalPort:  db.InternalPort,
+							Password:      db.Password,
+							PostgresID:    db.PostgresID,
+							MysqlID:       db.MysqlID,
+							MariadbID:     db.MariadbID,
+							MongoID:       db.MongoID,
+							RedisID:       db.RedisID,
 						}
 
-						// Create a copy to return
-						result := db
+						if result.ID == "" {
+							return nil, fmt.Errorf("database created but ID not found (name: %s, postgresId: %s, databaseId: %s)", name, db.PostgresID, db.ID)
+						}
+
 						return &result, nil
 					}
 				}
