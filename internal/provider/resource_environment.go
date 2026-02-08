@@ -84,34 +84,20 @@ func (r *EnvironmentResource) Create(ctx context.Context, req resource.CreateReq
 
 	env, err := r.client.CreateEnvironment(plan.ProjectID.ValueString(), plan.Name.ValueString(), plan.Description.ValueString())
 	if err != nil {
-		// Handle "Already exists" logic
-		if strings.Contains(strings.ToLower(err.Error()), "already exists") || strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-			// Fetch project to find the existing environment
-			project, pErr := r.client.GetProject(plan.ProjectID.ValueString())
-			if pErr != nil {
-				resp.Diagnostics.AddError("Error creating environment (and failed to fetch project for recovery)", fmt.Sprintf("Create error: %s. Fetch error: %s", err, pErr))
-				return
-			}
-
-			// Find env by name
-			found := false
-			for _, e := range project.Environments {
-				if e.Name == plan.Name.ValueString() {
-					plan.ID = types.StringValue(e.ID)
-					plan.Description = types.StringValue(e.Description)
-					found = true
-					break
-				}
-			}
-
-			if !found {
-				resp.Diagnostics.AddError("Error creating environment", fmt.Sprintf("API reported duplicate, but could not find environment with name '%s' in project '%s'. Original error: %s", plan.Name.ValueString(), plan.ProjectID.ValueString(), err))
-				return
-			}
-		} else {
+		// Dokploy may reject creation for reserved names (e.g. "production") while
+		// still exposing that environment in the project. Recover by resolving by name.
+		existingEnv, lookupErr := r.findProjectEnvironmentByName(plan.ProjectID.ValueString(), plan.Name.ValueString())
+		if lookupErr != nil {
+			resp.Diagnostics.AddError("Error creating environment (and failed to fetch project for recovery)", fmt.Sprintf("Create error: %s. Fetch error: %s", err, lookupErr))
+			return
+		}
+		if existingEnv == nil {
 			resp.Diagnostics.AddError("Error creating environment", err.Error())
 			return
 		}
+
+		plan.ID = types.StringValue(existingEnv.ID)
+		plan.Description = types.StringValue(existingEnv.Description)
 	} else {
 		plan.ID = types.StringValue(env.ID)
 		plan.Description = types.StringValue(env.Description)
@@ -200,4 +186,20 @@ func (r *EnvironmentResource) Delete(ctx context.Context, req resource.DeleteReq
 
 func (r *EnvironmentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func (r *EnvironmentResource) findProjectEnvironmentByName(projectID, envName string) (*client.Environment, error) {
+	project, err := r.client.GetProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, env := range project.Environments {
+		if strings.EqualFold(env.Name, envName) {
+			matched := env
+			return &matched, nil
+		}
+	}
+
+	return nil, nil
 }
