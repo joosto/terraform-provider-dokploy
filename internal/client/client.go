@@ -446,11 +446,26 @@ func (c *DokployClient) UpdateApplication(app Application) (*Application, error)
 }
 
 func (c *DokployClient) DeleteApplication(id string) error {
+	// Best-effort stop before deletion to make teardown explicit and predictable.
+	// Ignore stop errors; delete call should still reconcile the final state.
+	_ = c.StopApplication(id)
+
 	payload := map[string]string{
 		"applicationId": id,
 	}
-	_, err := c.doRequest("POST", "application.remove", payload)
-	return err
+	_, err := c.doRequest("POST", "application.delete", payload)
+	if err == nil {
+		return nil
+	}
+
+	// Backward compatibility with older Dokploy versions that still expose
+	// application.remove instead of application.delete.
+	_, removeErr := c.doRequest("POST", "application.remove", payload)
+	if removeErr != nil {
+		return fmt.Errorf("application.delete failed: %w; application.remove fallback failed: %w", err, removeErr)
+	}
+
+	return nil
 }
 
 func (c *DokployClient) SaveGithubProvider(appID string, githubConfig map[string]interface{}) error {
@@ -472,6 +487,14 @@ func (c *DokployClient) DeployApplication(id string) error {
 		"applicationId": id,
 	}
 	_, err := c.doRequest("POST", "application.deploy", payload)
+	return err
+}
+
+func (c *DokployClient) StopApplication(id string) error {
+	payload := map[string]string{
+		"applicationId": id,
+	}
+	_, err := c.doRequest("POST", "application.stop", payload)
 	return err
 }
 
