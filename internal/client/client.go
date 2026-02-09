@@ -257,6 +257,7 @@ type Application struct {
 	DockerBuildStage  string   `json:"dockerBuildStage"`
 	Env               string   `json:"env"`
 	Domains           []Domain `json:"domains"`
+	Ports             []Port   `json:"ports"`
 	AutoDeploy        bool     `json:"autoDeploy"`
 	// Enhanced fields
 	SourceType         string `json:"sourceType"`
@@ -1119,6 +1120,156 @@ func (c *DokployClient) UpdateDomain(domain Domain) (*Domain, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+// --- Port ---
+
+type Port struct {
+	ID            string `json:"portId"`
+	ApplicationID string `json:"applicationId"`
+	PublishedPort int64  `json:"publishedPort"`
+	TargetPort    int64  `json:"targetPort"`
+	Protocol      string `json:"protocol"`
+	PublishMode   string `json:"publishMode"`
+}
+
+func (c *DokployClient) CreatePort(port Port) (*Port, error) {
+	payload := map[string]interface{}{
+		"applicationId": port.ApplicationID,
+		"publishedPort": port.PublishedPort,
+		"targetPort":    port.TargetPort,
+	}
+	if strings.TrimSpace(port.Protocol) != "" {
+		payload["protocol"] = port.Protocol
+	}
+	if strings.TrimSpace(port.PublishMode) != "" {
+		payload["publishMode"] = port.PublishMode
+	}
+
+	resp, err := c.doRequest("POST", "port.create", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	var wrapper struct {
+		Port Port `json:"port"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err == nil && wrapper.Port.ID != "" {
+		return &wrapper.Port, nil
+	}
+
+	var result Port
+	if err := json.Unmarshal(resp, &result); err == nil && result.ID != "" {
+		return &result, nil
+	}
+
+	// Dokploy sometimes returns a bare boolean on successful writes.
+	// In that case resolve the newly created port by matching its signature.
+	if string(resp) == "true" {
+		return c.findPortBySignature(port.ApplicationID, port.PublishedPort, port.TargetPort, port.Protocol, port.PublishMode)
+	}
+
+	return c.findPortBySignature(port.ApplicationID, port.PublishedPort, port.TargetPort, port.Protocol, port.PublishMode)
+}
+
+func (c *DokployClient) findPortBySignature(applicationID string, publishedPort, targetPort int64, protocol, publishMode string) (*Port, error) {
+	app, err := c.GetApplication(applicationID)
+	if err != nil {
+		return nil, fmt.Errorf("port created but failed to fetch application: %w", err)
+	}
+
+	for _, existing := range app.Ports {
+		protocolMatches := strings.TrimSpace(protocol) == "" || strings.EqualFold(existing.Protocol, protocol)
+		publishModeMatches := strings.TrimSpace(publishMode) == "" || strings.EqualFold(existing.PublishMode, publishMode)
+
+		if existing.PublishedPort == publishedPort &&
+			existing.TargetPort == targetPort &&
+			protocolMatches &&
+			publishModeMatches {
+			return &existing, nil
+		}
+	}
+
+	return nil, fmt.Errorf(
+		"port created but not found on application %s (publishedPort=%d, targetPort=%d, protocol=%q, publishMode=%q)",
+		applicationID,
+		publishedPort,
+		targetPort,
+		protocol,
+		publishMode,
+	)
+}
+
+func (c *DokployClient) GetPort(id string) (*Port, error) {
+	endpoint := fmt.Sprintf("port.one?portId=%s", id)
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var wrapper struct {
+		Port Port `json:"port"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err == nil && wrapper.Port.ID != "" {
+		return &wrapper.Port, nil
+	}
+
+	var result Port
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, err
+	}
+	if result.ID == "" {
+		return nil, fmt.Errorf("failed to parse port.one response: missing portId")
+	}
+	return &result, nil
+}
+
+func (c *DokployClient) UpdatePort(port Port) (*Port, error) {
+	payload := map[string]interface{}{
+		"portId":        port.ID,
+		"publishedPort": port.PublishedPort,
+		"targetPort":    port.TargetPort,
+	}
+	if strings.TrimSpace(port.Protocol) != "" {
+		payload["protocol"] = port.Protocol
+	}
+	if strings.TrimSpace(port.PublishMode) != "" {
+		payload["publishMode"] = port.PublishMode
+	}
+
+	resp, err := c.doRequest("POST", "port.update", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	var wrapper struct {
+		Port Port `json:"port"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err == nil && wrapper.Port.ID != "" {
+		return &wrapper.Port, nil
+	}
+
+	var result Port
+	if err := json.Unmarshal(resp, &result); err == nil && result.ID != "" {
+		return &result, nil
+	}
+
+	if string(resp) == "true" {
+		return c.GetPort(port.ID)
+	}
+
+	return c.GetPort(port.ID)
+}
+
+func (c *DokployClient) DeletePort(id string) error {
+	payload := map[string]string{
+		"portId": id,
+	}
+	_, err := c.doRequest("POST", "port.delete", payload)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // --- Environment Variable ---
