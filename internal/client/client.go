@@ -970,22 +970,24 @@ func (c *DokployClient) DeleteDatabaseWithType(id, dbType string) error {
 // --- Domain ---
 
 type Domain struct {
-	ID            string `json:"domainId"`
-	ApplicationID string `json:"applicationId"`
-	ComposeID     string `json:"composeId"`
-	ServiceName   string `json:"serviceName"`
-	Host          string `json:"host"`
-	Path          string `json:"path"`
-	Port          int64  `json:"port"`
-	HTTPS         bool   `json:"https"`
+	ID              string `json:"domainId"`
+	ApplicationID   string `json:"applicationId"`
+	ComposeID       string `json:"composeId"`
+	ServiceName     string `json:"serviceName"`
+	Host            string `json:"host"`
+	Path            string `json:"path"`
+	Port            int64  `json:"port"`
+	HTTPS           bool   `json:"https"`
+	CertificateType string `json:"certificateType"`
 }
 
 func (c *DokployClient) CreateDomain(domain Domain) (*Domain, error) {
 	payload := map[string]interface{}{
-		"host":  domain.Host,
-		"path":  domain.Path,
-		"port":  domain.Port,
-		"https": domain.HTTPS,
+		"host":            domain.Host,
+		"path":            domain.Path,
+		"port":            domain.Port,
+		"https":           domain.HTTPS,
+		"certificateType": domain.CertificateType,
 	}
 	if domain.ApplicationID != "" {
 		payload["applicationId"] = domain.ApplicationID
@@ -1064,12 +1066,13 @@ func (c *DokployClient) GenerateDomain(appName string) (string, error) {
 
 func (c *DokployClient) UpdateDomain(domain Domain) (*Domain, error) {
 	payload := map[string]interface{}{
-		"domainId":    domain.ID,
-		"host":        domain.Host,
-		"path":        domain.Path,
-		"port":        domain.Port,
-		"https":       domain.HTTPS,
-		"serviceName": domain.ServiceName,
+		"domainId":        domain.ID,
+		"host":            domain.Host,
+		"path":            domain.Path,
+		"port":            domain.Port,
+		"https":           domain.HTTPS,
+		"certificateType": domain.CertificateType,
+		"serviceName":     domain.ServiceName,
 	}
 	resp, err := c.doRequest("POST", "domain.update", payload)
 	if err != nil {

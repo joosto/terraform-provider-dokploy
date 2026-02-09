@@ -179,6 +179,13 @@ func (r *EnvironmentResource) Delete(ctx context.Context, req resource.DeleteReq
 
 	err := r.client.DeleteEnvironment(state.ID.ValueString())
 	if err != nil {
+		if isDefaultEnvironmentDeleteError(err) {
+			resp.Diagnostics.AddWarning(
+				"Default Environment Not Deleted",
+				fmt.Sprintf("Dokploy rejected deletion of environment %q because it is the project's default environment. Removing it from Terraform state only.", state.Name.ValueString()),
+			)
+			return
+		}
 		resp.Diagnostics.AddError("Error deleting environment", err.Error())
 		return
 	}
@@ -202,4 +209,12 @@ func (r *EnvironmentResource) findProjectEnvironmentByName(projectID, envName st
 	}
 
 	return nil, nil
+}
+
+func isDefaultEnvironmentDeleteError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "default environment") && strings.Contains(msg, "cannot delete")
 }
