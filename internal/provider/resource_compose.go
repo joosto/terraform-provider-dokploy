@@ -184,7 +184,8 @@ func (r *ComposeResource) Create(ctx context.Context, req resource.CreateRequest
 		plan.ComposeFileContent = types.StringNull()
 	}
 
-	if !plan.DeployOnCreate.IsNull() && plan.DeployOnCreate.ValueBool() {
+	if !plan.DeployOnCreate.IsNull() && plan.DeployOnCreate.ValueBool() && !createdComp.AutoDeploy {
+		// Avoid duplicate deployments: Dokploy can already trigger deploys when autoDeploy is enabled.
 		err := r.client.DeployCompose(createdComp.ID)
 		if err != nil {
 			resp.Diagnostics.AddWarning("Deployment Trigger Failed", fmt.Sprintf("Compose stack created but deployment failed to trigger: %s", err.Error()))
