@@ -308,8 +308,7 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 		}
 	}
 
-	if !plan.DeployOnCreate.IsNull() && plan.DeployOnCreate.ValueBool() && !createdApp.AutoDeploy {
-		// Avoid duplicate deployments: Dokploy can already trigger deploys when autoDeploy is enabled.
+	if !plan.DeployOnCreate.IsNull() && plan.DeployOnCreate.ValueBool() {
 		err := r.client.DeployApplication(createdApp.ID)
 		if err != nil {
 			resp.Diagnostics.AddWarning("Deployment Trigger Failed", fmt.Sprintf("Application created but deployment failed to trigger: %s", err.Error()))
