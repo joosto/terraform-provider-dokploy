@@ -631,12 +631,31 @@ func (c *DokployClient) UpdateCompose(comp Compose) (*Compose, error) {
 	return &result, nil
 }
 
-func (c *DokployClient) DeleteCompose(id string) error {
+func (c *DokployClient) DeleteCompose(id string, deleteVolumes bool) error {
+	// Best-effort stop before deletion to make teardown explicit and predictable.
+	// Ignore stop errors; delete call should still reconcile the final state.
+	_ = c.StopCompose(id)
+
+	deletePayload := map[string]interface{}{
+		"composeId":     id,
+		"deleteVolumes": deleteVolumes,
+	}
+	_, err := c.doRequest("POST", "compose.delete", deletePayload)
+	if err == nil {
+		return nil
+	}
+
+	// Backward compatibility with older Dokploy versions that still expose
+	// compose.remove instead of compose.delete.
 	payload := map[string]string{
 		"composeId": id,
 	}
-	_, err := c.doRequest("POST", "compose.remove", payload)
-	return err
+	_, removeErr := c.doRequest("POST", "compose.remove", payload)
+	if removeErr != nil {
+		return fmt.Errorf("compose.delete failed: %w; compose.remove fallback failed: %w", err, removeErr)
+	}
+
+	return nil
 }
 
 func (c *DokployClient) DeployCompose(id string) error {
@@ -644,6 +663,14 @@ func (c *DokployClient) DeployCompose(id string) error {
 		"composeId": id,
 	}
 	_, err := c.doRequest("POST", "compose.deploy", payload)
+	return err
+}
+
+func (c *DokployClient) StopCompose(id string) error {
+	payload := map[string]string{
+		"composeId": id,
+	}
+	_, err := c.doRequest("POST", "compose.stop", payload)
 	return err
 }
 
