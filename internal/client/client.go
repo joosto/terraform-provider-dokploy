@@ -488,6 +488,7 @@ type Compose struct {
 	CustomGitSSHKeyId string   `json:"customGitSSHKeyId"`
 	ComposePath       string   `json:"composePath"`
 	AutoDeploy        bool     `json:"autoDeploy"`
+	Env               string   `json:"env"`
 	Domains           []Domain `json:"domains"`
 }
 
@@ -1173,6 +1174,53 @@ func (c *DokployClient) UpdateApplicationEnv(appID string, updateFn func(envMap 
 			continue
 		}
 		if verifyApp.Env == newEnvStr {
+			return nil // Success
+		}
+		lastErr = fmt.Errorf("environment update conflict, retrying")
+	}
+	return lastErr
+}
+
+func (c *DokployClient) UpdateComposeEnv(composeID string, updateFn func(envMap map[string]string), _ *bool) error {
+	var lastErr error
+	for i := 0; i < 5; i++ { // Retry up to 5 times
+		comp, err := c.GetCompose(composeID)
+		if err != nil {
+			return err
+		}
+
+		envMap := ParseEnv(comp.Env)
+		originalEnvStr := comp.Env
+
+		updateFn(envMap) // Modify the map
+
+		newEnvStr := formatEnv(envMap)
+
+		if newEnvStr == originalEnvStr {
+			return nil // No changes to be made
+		}
+
+		payload := map[string]interface{}{
+			"composeId": composeID,
+			"env":       newEnvStr,
+		}
+
+		_, err = c.doRequest("POST", "compose.update", payload)
+		if err != nil {
+			lastErr = err
+			time.Sleep(time.Duration(100*(i+1)) * time.Millisecond) // Backoff
+			continue
+		}
+
+		// Verify write
+		verifyComp, err := c.GetCompose(composeID)
+		if err != nil {
+			// If we can't verify, we have to assume it worked or retry
+			lastErr = fmt.Errorf("failed to verify environment update: %w", err)
+			time.Sleep(time.Duration(100*(i+1)) * time.Millisecond)
+			continue
+		}
+		if verifyComp.Env == newEnvStr {
 			return nil // Success
 		}
 		lastErr = fmt.Errorf("environment update conflict, retrying")
