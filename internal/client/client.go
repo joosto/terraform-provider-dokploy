@@ -771,6 +771,56 @@ type Database struct {
 	RedisID       string `json:"redisId"`
 }
 
+func databaseTypeSpecificID(db Database, databaseType string) string {
+	switch databaseType {
+	case "postgres":
+		return db.PostgresID
+	case "mysql":
+		return db.MysqlID
+	case "mariadb":
+		return db.MariadbID
+	case "mongo":
+		return db.MongoID
+	case "redis":
+		return db.RedisID
+	default:
+		return ""
+	}
+}
+
+func databaseAnyTypeID(db Database) string {
+	if db.PostgresID != "" {
+		return db.PostgresID
+	}
+	if db.MysqlID != "" {
+		return db.MysqlID
+	}
+	if db.MariadbID != "" {
+		return db.MariadbID
+	}
+	if db.MongoID != "" {
+		return db.MongoID
+	}
+	if db.RedisID != "" {
+		return db.RedisID
+	}
+	return ""
+}
+
+func normalizeDatabaseID(db *Database, databaseType string) {
+	if db == nil {
+		return
+	}
+	if db.ID != "" {
+		return
+	}
+	if id := databaseTypeSpecificID(*db, databaseType); id != "" {
+		db.ID = id
+		return
+	}
+	db.ID = databaseAnyTypeID(*db)
+}
+
 func (c *DokployClient) CreateDatabase(projectID, environmentID, name, dbType, password, dockerImage string) (*Database, error) {
 	var endpoint string
 	payload := map[string]string{
@@ -807,15 +857,16 @@ func (c *DokployClient) CreateDatabase(projectID, environmentID, name, dbType, p
 		return nil, err
 	}
 
-	// Try to parse the response as a database object first
+	// Try to parse the response as a database object first.
 	var directResult Database
-	if err := json.Unmarshal(resp, &directResult); err == nil && directResult.PostgresID != "" {
-		// Direct response with postgresId
-		directResult.ID = directResult.PostgresID
-		if directResult.Type == "" {
-			directResult.Type = dbType
+	if err := json.Unmarshal(resp, &directResult); err == nil {
+		normalizeDatabaseID(&directResult, dbType)
+		if directResult.ID != "" {
+			if directResult.Type == "" {
+				directResult.Type = dbType
+			}
+			return &directResult, nil
 		}
-		return &directResult, nil
 	}
 
 	// Check if response is just "true" (boolean success indicator)
@@ -843,18 +894,9 @@ func (c *DokployClient) CreateDatabase(projectID, environmentID, name, dbType, p
 
 				for _, db := range dbs {
 					if db.Name == name || db.AppName == name {
-						id := db.PostgresID
-						if db.MysqlID != "" {
-							id = db.MysqlID
-						}
-						if db.MariadbID != "" {
-							id = db.MariadbID
-						}
-						if db.MongoID != "" {
-							id = db.MongoID
-						}
-						if db.RedisID != "" {
-							id = db.RedisID
+						id := databaseTypeSpecificID(db, dbType)
+						if id == "" {
+							id = databaseAnyTypeID(db)
 						}
 
 						// If no type-specific ID, try the generic databaseId field
@@ -881,6 +923,7 @@ func (c *DokployClient) CreateDatabase(projectID, environmentID, name, dbType, p
 							MongoID:       db.MongoID,
 							RedisID:       db.RedisID,
 						}
+						normalizeDatabaseID(&result, dbType)
 
 						if result.ID == "" {
 							return nil, fmt.Errorf("database created but ID not found (name: %s, postgresId: %s, databaseId: %s)", name, db.PostgresID, db.ID)
@@ -897,19 +940,26 @@ func (c *DokployClient) CreateDatabase(projectID, environmentID, name, dbType, p
 	var wrapper struct {
 		Database Database `json:"database"`
 	}
-	if err := json.Unmarshal(resp, &wrapper); err == nil && wrapper.Database.ID != "" {
-		if wrapper.Database.Type == "" {
-			wrapper.Database.Type = dbType
+	if err := json.Unmarshal(resp, &wrapper); err == nil {
+		normalizeDatabaseID(&wrapper.Database, dbType)
+		if wrapper.Database.ID != "" {
+			if wrapper.Database.Type == "" {
+				wrapper.Database.Type = dbType
+			}
+			return &wrapper.Database, nil
 		}
-		return &wrapper.Database, nil
 	}
 
 	var result Database
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
+	normalizeDatabaseID(&result, dbType)
 	if result.Type == "" {
 		result.Type = dbType
+	}
+	if result.ID == "" {
+		return nil, fmt.Errorf("database created but ID not found in response for type %s", dbType)
 	}
 	return &result, nil
 }
@@ -938,44 +988,8 @@ func (c *DokployClient) GetDatabase(dbID string, databaseType string) (*Database
 
 	var db Database
 	if err := json.Unmarshal(resp, &db); err == nil {
-		valid := false
+		normalizeDatabaseID(&db, databaseType)
 		if db.ID != "" {
-			valid = true
-		}
-		if db.PostgresID != "" {
-			valid = true
-		}
-		if db.MysqlID != "" {
-			valid = true
-		}
-		if db.MariadbID != "" {
-			valid = true
-		}
-		if db.MongoID != "" {
-			valid = true
-		}
-		if db.RedisID != "" {
-			valid = true
-		}
-
-		if valid {
-			if db.ID == "" {
-				if db.PostgresID != "" {
-					db.ID = db.PostgresID
-				}
-				if db.MysqlID != "" {
-					db.ID = db.MysqlID
-				}
-				if db.MariadbID != "" {
-					db.ID = db.MariadbID
-				}
-				if db.MongoID != "" {
-					db.ID = db.MongoID
-				}
-				if db.RedisID != "" {
-					db.ID = db.RedisID
-				}
-			}
 			db.Type = databaseType
 			return &db, nil
 		}
@@ -1013,24 +1027,7 @@ func (c *DokployClient) GetDatabase(dbID string, databaseType string) (*Database
 	if err := json.Unmarshal(dbBytes, &db); err != nil {
 		return nil, err
 	}
-
-	if db.ID == "" {
-		if db.PostgresID != "" {
-			db.ID = db.PostgresID
-		}
-		if db.MysqlID != "" {
-			db.ID = db.MysqlID
-		}
-		if db.MariadbID != "" {
-			db.ID = db.MariadbID
-		}
-		if db.MongoID != "" {
-			db.ID = db.MongoID
-		}
-		if db.RedisID != "" {
-			db.ID = db.RedisID
-		}
-	}
+	normalizeDatabaseID(&db, databaseType)
 	db.Type = databaseType
 
 	return &db, nil

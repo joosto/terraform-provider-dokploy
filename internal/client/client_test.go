@@ -190,3 +190,55 @@ func TestUpdateProjectEnv_NoChangesSkipsUpdate(t *testing.T) {
 		t.Fatalf("expected no project.update call, got %d", updateCalls)
 	}
 }
+
+func TestCreateDatabase_MySQLDirectResponseUsesMysqlIDAsID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mysql.create":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"mysqlId":"mysql-123","name":"test-db","appName":"test-db"}`))
+		default:
+			t.Fatalf("unexpected endpoint called: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+
+	db, err := c.CreateDatabase("project-1", "env-1", "test-db", "mysql", "secret", "mysql:8")
+	if err != nil {
+		t.Fatalf("CreateDatabase returned error: %v", err)
+	}
+	if db.ID != "mysql-123" {
+		t.Fatalf("unexpected database ID: got %q want %q", db.ID, "mysql-123")
+	}
+	if db.Type != "mysql" {
+		t.Fatalf("unexpected database type: got %q want %q", db.Type, "mysql")
+	}
+}
+
+func TestCreateDatabase_MySQLWrappedResponseUsesMysqlIDAsID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mysql.create":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"database":{"mysqlId":"mysql-456","name":"test-db","appName":"test-db"}}`))
+		default:
+			t.Fatalf("unexpected endpoint called: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+
+	db, err := c.CreateDatabase("project-1", "env-1", "test-db", "mysql", "secret", "mysql:8")
+	if err != nil {
+		t.Fatalf("CreateDatabase returned error: %v", err)
+	}
+	if db.ID != "mysql-456" {
+		t.Fatalf("unexpected database ID: got %q want %q", db.ID, "mysql-456")
+	}
+	if db.Type != "mysql" {
+		t.Fatalf("unexpected database type: got %q want %q", db.Type, "mysql")
+	}
+}
