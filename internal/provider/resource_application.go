@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -54,6 +55,14 @@ type ApplicationResourceModel struct {
 	GithubWatchPaths types.List   `tfsdk:"github_watch_paths"`
 	EnableSubmodules types.Bool   `tfsdk:"enable_submodules"`
 	TriggerType      types.String `tfsdk:"trigger_type"`
+	Ports            types.List   `tfsdk:"ports"`
+}
+
+type ApplicationPortResourceModel struct {
+	PublishedPort types.Int64  `tfsdk:"published_port"`
+	TargetPort    types.Int64  `tfsdk:"target_port"`
+	Protocol      types.String `tfsdk:"protocol"`
+	PublishMode   types.String `tfsdk:"publish_mode"`
 }
 
 func (r *ApplicationResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -134,6 +143,28 @@ func (r *ApplicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"deploy_on_create": schema.BoolAttribute{
 				Optional: true,
 			},
+			"ports": schema.ListNestedAttribute{
+				Optional: true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
+				},
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"published_port": schema.Int64Attribute{
+							Required: true,
+						},
+						"target_port": schema.Int64Attribute{
+							Required: true,
+						},
+						"protocol": schema.StringAttribute{
+							Optional: true,
+						},
+						"publish_mode": schema.StringAttribute{
+							Optional: true,
+						},
+					},
+				},
+			},
 			"github_repository": schema.StringAttribute{
 				Optional: true,
 			},
@@ -199,6 +230,26 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 		plan.DockerBuildStage = types.StringValue("")
 	}
 
+	var managedPorts []ApplicationPortResourceModel
+	if !plan.Ports.IsNull() && !plan.Ports.IsUnknown() {
+		diags = plan.Ports.ElementsAs(ctx, &managedPorts, false)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	autoDeployConfigured := !plan.AutoDeploy.IsNull() && !plan.AutoDeploy.IsUnknown()
+	desiredAutoDeploy := false
+	if autoDeployConfigured {
+		desiredAutoDeploy = plan.AutoDeploy.ValueBool()
+	}
+	createAutoDeploy := desiredAutoDeploy
+	if len(managedPorts) > 0 && desiredAutoDeploy {
+		// Defer auto deploy until ports are created so first deployment has networking in place.
+		createAutoDeploy = false
+	}
+
 	// Default SourceType logic
 	if plan.SourceType.IsUnknown() || plan.SourceType.IsNull() {
 		if !plan.CustomGitUrl.IsNull() && !plan.CustomGitUrl.IsUnknown() && plan.CustomGitUrl.ValueString() != "" {
@@ -225,7 +276,7 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 		SourceType:         plan.SourceType.ValueString(),
 		Username:           plan.Username.ValueString(),
 		Password:           plan.Password.ValueString(),
-		AutoDeploy:         plan.AutoDeploy.ValueBool(),
+		AutoDeploy:         createAutoDeploy,
 	}
 
 	createdApp, err := r.client.CreateApplication(app)
@@ -263,7 +314,31 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 		plan.DockerBuildStage = types.StringValue(createdApp.DockerBuildStage)
 	}
 
-	plan.AutoDeploy = types.BoolValue(createdApp.AutoDeploy)
+	for i, portPlan := range managedPorts {
+		protocol := strings.TrimSpace(portPlan.Protocol.ValueString())
+		if portPlan.Protocol.IsUnknown() || portPlan.Protocol.IsNull() || protocol == "" {
+			protocol = "tcp"
+		}
+		publishMode := strings.TrimSpace(portPlan.PublishMode.ValueString())
+		if portPlan.PublishMode.IsUnknown() || portPlan.PublishMode.IsNull() || publishMode == "" {
+			publishMode = "ingress"
+		}
+
+		_, err := r.client.CreatePort(client.Port{
+			ApplicationID: createdApp.ID,
+			PublishedPort: portPlan.PublishedPort.ValueInt64(),
+			TargetPort:    portPlan.TargetPort.ValueInt64(),
+			Protocol:      protocol,
+			PublishMode:   publishMode,
+		})
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error creating application port",
+				fmt.Sprintf("failed creating ports[%d] for application %s: %s", i, createdApp.ID, err.Error()),
+			)
+			return
+		}
+	}
 
 	// Save GitHub provider if GitHub fields are provided
 	if !plan.GithubID.IsNull() && !plan.GithubID.IsUnknown() && plan.GithubID.ValueString() != "" {
@@ -308,7 +383,46 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 		}
 	}
 
-	if !plan.DeployOnCreate.IsNull() && plan.DeployOnCreate.ValueBool() {
+	if len(managedPorts) > 0 && desiredAutoDeploy && !createdApp.AutoDeploy {
+		updatedApp, err := r.client.UpdateApplication(client.Application{
+			ID:                 createdApp.ID,
+			Name:               app.Name,
+			ProjectID:          app.ProjectID,
+			EnvironmentID:      app.EnvironmentID,
+			RepositoryURL:      app.RepositoryURL,
+			Branch:             app.Branch,
+			BuildType:          app.BuildType,
+			DockerfilePath:     app.DockerfilePath,
+			DockerContextPath:  app.DockerContextPath,
+			DockerBuildStage:   app.DockerBuildStage,
+			CustomGitUrl:       app.CustomGitUrl,
+			CustomGitBranch:    app.CustomGitBranch,
+			CustomGitSSHKeyId:  app.CustomGitSSHKeyId,
+			CustomGitBuildPath: app.CustomGitBuildPath,
+			SourceType:         app.SourceType,
+			Username:           app.Username,
+			Password:           app.Password,
+			AutoDeploy:         true,
+		})
+		if err != nil {
+			resp.Diagnostics.AddWarning(
+				"Auto Deploy Activation Failed",
+				fmt.Sprintf("Application and ports were created, but enabling auto_deploy failed: %s", err.Error()),
+			)
+		} else {
+			createdApp = updatedApp
+		}
+	}
+
+	if autoDeployConfigured {
+		plan.AutoDeploy = types.BoolValue(desiredAutoDeploy)
+	} else {
+		plan.AutoDeploy = types.BoolValue(createdApp.AutoDeploy)
+	}
+
+	shouldTriggerDeploy := !plan.DeployOnCreate.IsNull() && plan.DeployOnCreate.ValueBool()
+	// For inline managed ports with deferred autoDeploy, avoid duplicate deploys.
+	if shouldTriggerDeploy && !(len(managedPorts) > 0 && createdApp.AutoDeploy) {
 		err := r.client.DeployApplication(createdApp.ID)
 		if err != nil {
 			resp.Diagnostics.AddWarning("Deployment Trigger Failed", fmt.Sprintf("Application created but deployment failed to trigger: %s", err.Error()))
