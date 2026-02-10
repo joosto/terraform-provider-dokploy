@@ -554,6 +554,7 @@ func (c *DokployClient) StopApplication(id string) error {
 type Compose struct {
 	ID                string   `json:"composeId"`
 	Name              string   `json:"name"`
+	AppName           string   `json:"appName"`
 	ProjectID         string   `json:"projectId"`
 	EnvironmentID     string   `json:"environmentId"`
 	ComposeFile       string   `json:"composeFile"`
@@ -1640,4 +1641,368 @@ func (c *DokployClient) DeleteSSHKey(id string) error {
 	}
 	_, err := c.doRequest("POST", "sshKey.remove", payload)
 	return err
+}
+
+// --- Volume Backup ---
+
+type VolumeBackup struct {
+	ID              string `json:"volumeBackupId"`
+	Name            string `json:"name"`
+	ServiceType     string `json:"serviceType"`
+	ComposeID       string `json:"composeId"`
+	AppName         string `json:"appName"`
+	ServiceName     string `json:"serviceName"`
+	VolumeName      string `json:"volumeName"`
+	DestinationID   string `json:"destinationId"`
+	CronExpression  string `json:"cronExpression"`
+	Prefix          string `json:"prefix"`
+	TurnOff         bool   `json:"turnOff"`
+	Enabled         bool   `json:"enabled"`
+	KeepLatestCount int64  `json:"keepLatestCount"`
+}
+
+type BackupDestination struct {
+	ID              string `json:"destinationId"`
+	Name            string `json:"name"`
+	Type            string `json:"type"`
+	Provider        string `json:"provider"`
+	Bucket          string `json:"bucket"`
+	Region          string `json:"region"`
+	Endpoint        string `json:"endpoint"`
+	AccessKey       string `json:"accessKey"`
+	SecretKey       string `json:"secretKey"`
+	AccessKeyID     string `json:"accessKeyId"`
+	SecretAccessKey string `json:"secretAccessKey"`
+}
+
+func (c *DokployClient) CreateVolumeBackup(backup VolumeBackup) (*VolumeBackup, error) {
+	payload := map[string]interface{}{
+		"name":            backup.Name,
+		"serviceType":     backup.ServiceType,
+		"composeId":       backup.ComposeID,
+		"serviceName":     backup.ServiceName,
+		"volumeName":      backup.VolumeName,
+		"destinationId":   backup.DestinationID,
+		"cronExpression":  backup.CronExpression,
+		"turnOff":         backup.TurnOff,
+		"enabled":         backup.Enabled,
+		"keepLatestCount": backup.KeepLatestCount,
+	}
+	if payload["serviceType"] == "" {
+		payload["serviceType"] = "compose"
+	}
+	if backup.Prefix != "" {
+		payload["prefix"] = backup.Prefix
+	}
+	if backup.AppName != "" {
+		payload["appName"] = backup.AppName
+	}
+
+	resp, err := c.doRequest("POST", "volumeBackups.create", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	created, parseErr := parseVolumeBackupResponse(resp)
+	if parseErr == nil && created.ID != "" {
+		return created, nil
+	}
+
+	found, findErr := c.findVolumeBackupByTarget(backup.ComposeID, backup.Name, backup.ServiceName, backup.VolumeName)
+	if findErr != nil {
+		return nil, fmt.Errorf("volume backup created but response was not parseable (%v) and lookup failed: %w", parseErr, findErr)
+	}
+	return found, nil
+}
+
+func (c *DokployClient) GetVolumeBackup(id string) (*VolumeBackup, error) {
+	endpoint := fmt.Sprintf("volumeBackups.one?volumeBackupId=%s", id)
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	return parseVolumeBackupResponse(resp)
+}
+
+func (c *DokployClient) UpdateVolumeBackup(backup VolumeBackup) (*VolumeBackup, error) {
+	payload := map[string]interface{}{
+		"volumeBackupId":  backup.ID,
+		"name":            backup.Name,
+		"serviceType":     backup.ServiceType,
+		"composeId":       backup.ComposeID,
+		"serviceName":     backup.ServiceName,
+		"volumeName":      backup.VolumeName,
+		"destinationId":   backup.DestinationID,
+		"cronExpression":  backup.CronExpression,
+		"turnOff":         backup.TurnOff,
+		"enabled":         backup.Enabled,
+		"keepLatestCount": backup.KeepLatestCount,
+	}
+	if payload["serviceType"] == "" {
+		payload["serviceType"] = "compose"
+	}
+	if backup.Prefix != "" {
+		payload["prefix"] = backup.Prefix
+	}
+	if backup.AppName != "" {
+		payload["appName"] = backup.AppName
+	}
+
+	resp, err := c.doRequest("POST", "volumeBackups.update", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	updated, parseErr := parseVolumeBackupResponse(resp)
+	if parseErr == nil && updated.ID != "" {
+		return updated, nil
+	}
+	return c.GetVolumeBackup(backup.ID)
+}
+
+func (c *DokployClient) DeleteVolumeBackup(id string) error {
+	payload := map[string]string{
+		"volumeBackupId": id,
+	}
+	_, err := c.doRequest("POST", "volumeBackups.delete", payload)
+	if err == nil {
+		return nil
+	}
+
+	// Backward compatibility with older Dokploy versions.
+	_, removeErr := c.doRequest("POST", "volumeBackups.remove", payload)
+	if removeErr != nil {
+		return fmt.Errorf("volumeBackups.delete failed: %w; volumeBackups.remove fallback failed: %w", err, removeErr)
+	}
+	return nil
+}
+
+func (c *DokployClient) ListVolumeBackups(composeID string) ([]VolumeBackup, error) {
+	endpoint := fmt.Sprintf("volumeBackups.list?id=%s&volumeBackupType=compose", composeID)
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		legacyEndpoint := fmt.Sprintf("volumeBackups.all?id=%s&type=compose", composeID)
+		legacyResp, legacyErr := c.doRequest("GET", legacyEndpoint, nil)
+		if legacyErr != nil {
+			return nil, fmt.Errorf("volumeBackups.list failed: %w; volumeBackups.all fallback failed: %w", err, legacyErr)
+		}
+		return parseVolumeBackupListResponse(legacyResp)
+	}
+	return parseVolumeBackupListResponse(resp)
+}
+
+func (c *DokployClient) ListBackupDestinations() ([]BackupDestination, error) {
+	resp, err := c.doRequest("GET", "destination.all", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var wrapper struct {
+		Destinations []BackupDestination `json:"destinations"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err == nil && wrapper.Destinations != nil {
+		return wrapper.Destinations, nil
+	}
+
+	var list []BackupDestination
+	if err := json.Unmarshal(resp, &list); err == nil {
+		return list, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse destination.all response")
+}
+
+func (c *DokployClient) CreateBackupDestination(destination BackupDestination) (*BackupDestination, error) {
+	provider := destination.Provider
+	if provider == "" {
+		provider = destination.Type
+	}
+
+	accessKey := destination.AccessKey
+	if accessKey == "" {
+		accessKey = destination.AccessKeyID
+	}
+
+	secretKey := destination.SecretKey
+	if secretKey == "" {
+		secretKey = destination.SecretAccessKey
+	}
+
+	payload := map[string]interface{}{
+		"name":            destination.Name,
+		"provider":        provider,
+		"accessKey":       accessKey,
+		"bucket":          destination.Bucket,
+		"region":          destination.Region,
+		"endpoint":        destination.Endpoint,
+		"secretAccessKey": secretKey,
+	}
+	if payload["provider"] == "" {
+		payload["provider"] = "s3"
+	}
+	// destination.create requires region and endpoint; allow empty values to pass
+	// through so Dokploy can return explicit validation diagnostics.
+
+	resp, err := c.doRequest("POST", "destination.create", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	created, parseErr := parseBackupDestinationResponse(resp)
+	if parseErr == nil && created.ID != "" {
+		return created, nil
+	}
+
+	found, findErr := c.FindBackupDestinationByName(destination.Name)
+	if findErr != nil {
+		return nil, fmt.Errorf("destination created but response was not parseable (%v) and lookup failed: %w", parseErr, findErr)
+	}
+	return found, nil
+}
+
+func (c *DokployClient) GetBackupDestination(id string) (*BackupDestination, error) {
+	endpoint := fmt.Sprintf("destination.one?destinationId=%s", id)
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	return parseBackupDestinationResponse(resp)
+}
+
+func (c *DokployClient) UpdateBackupDestination(destination BackupDestination) (*BackupDestination, error) {
+	provider := destination.Provider
+	if provider == "" {
+		provider = destination.Type
+	}
+
+	accessKey := destination.AccessKey
+	if accessKey == "" {
+		accessKey = destination.AccessKeyID
+	}
+
+	secretKey := destination.SecretKey
+	if secretKey == "" {
+		secretKey = destination.SecretAccessKey
+	}
+
+	payload := map[string]interface{}{
+		"destinationId":   destination.ID,
+		"name":            destination.Name,
+		"provider":        provider,
+		"accessKey":       accessKey,
+		"bucket":          destination.Bucket,
+		"region":          destination.Region,
+		"endpoint":        destination.Endpoint,
+		"secretAccessKey": secretKey,
+	}
+	if payload["provider"] == "" {
+		payload["provider"] = "s3"
+	}
+	// destination.update requires region and endpoint; allow empty values to pass
+	// through so Dokploy can return explicit validation diagnostics.
+
+	resp, err := c.doRequest("POST", "destination.update", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	updated, parseErr := parseBackupDestinationResponse(resp)
+	if parseErr == nil && updated.ID != "" {
+		return updated, nil
+	}
+	return c.GetBackupDestination(destination.ID)
+}
+
+func (c *DokployClient) DeleteBackupDestination(id string) error {
+	payload := map[string]string{
+		"destinationId": id,
+	}
+	_, err := c.doRequest("POST", "destination.remove", payload)
+	return err
+}
+
+func (c *DokployClient) FindBackupDestinationByName(name string) (*BackupDestination, error) {
+	destinations, err := c.ListBackupDestinations()
+	if err != nil {
+		return nil, err
+	}
+
+	target := strings.TrimSpace(name)
+	for _, destination := range destinations {
+		if strings.EqualFold(strings.TrimSpace(destination.Name), target) {
+			return &destination, nil
+		}
+	}
+
+	return nil, fmt.Errorf("backup destination not found by name: %s", name)
+}
+
+func parseBackupDestinationResponse(resp []byte) (*BackupDestination, error) {
+	var wrapper struct {
+		Destination BackupDestination `json:"destination"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err == nil && wrapper.Destination.ID != "" {
+		return &wrapper.Destination, nil
+	}
+
+	var direct BackupDestination
+	if err := json.Unmarshal(resp, &direct); err == nil && direct.ID != "" {
+		return &direct, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse destination response")
+}
+
+func (c *DokployClient) findVolumeBackupByTarget(composeID, name, serviceName, volumeName string) (*VolumeBackup, error) {
+	backups, err := c.ListVolumeBackups(composeID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, backup := range backups {
+		if backup.Name == name && backup.ServiceName == serviceName && backup.VolumeName == volumeName {
+			return &backup, nil
+		}
+	}
+
+	return nil, fmt.Errorf("volume backup not found by target (name=%s, service=%s, volume=%s)", name, serviceName, volumeName)
+}
+
+func parseVolumeBackupResponse(resp []byte) (*VolumeBackup, error) {
+	var wrapper struct {
+		VolumeBackup VolumeBackup `json:"volumeBackup"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err == nil && wrapper.VolumeBackup.ID != "" {
+		return &wrapper.VolumeBackup, nil
+	}
+
+	var direct VolumeBackup
+	if err := json.Unmarshal(resp, &direct); err == nil && direct.ID != "" {
+		return &direct, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse volume backup response")
+}
+
+func parseVolumeBackupListResponse(resp []byte) ([]VolumeBackup, error) {
+	var wrapper struct {
+		VolumeBackups []VolumeBackup `json:"volumeBackups"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err == nil && wrapper.VolumeBackups != nil {
+		return wrapper.VolumeBackups, nil
+	}
+
+	var dataWrapper struct {
+		Data []VolumeBackup `json:"data"`
+	}
+	if err := json.Unmarshal(resp, &dataWrapper); err == nil && dataWrapper.Data != nil {
+		return dataWrapper.Data, nil
+	}
+
+	var direct []VolumeBackup
+	if err := json.Unmarshal(resp, &direct); err == nil {
+		return direct, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse volumeBackups.all response")
 }

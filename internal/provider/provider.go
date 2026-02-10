@@ -86,11 +86,13 @@ func (p *DokployProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewApplicationResource,
 		NewComposeResource,
 		NewDatabaseResource,
+		NewBackupDestinationResource,
 		NewDomainResource,
 		NewPortResource,
 		NewEnvironmentVariablesResource,
 		NewProjectEnvironmentVariablesResource,
 		NewSSHKeyResource,
+		NewVolumeBackupResource,
 	}
 }
 
