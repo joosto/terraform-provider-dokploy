@@ -89,6 +89,7 @@ func (p *DokployProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewDomainResource,
 		NewPortResource,
 		NewEnvironmentVariablesResource,
+		NewProjectEnvironmentVariablesResource,
 		NewSSHKeyResource,
 	}
 }

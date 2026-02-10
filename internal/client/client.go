@@ -105,6 +105,7 @@ type Project struct {
 	ID           string        `json:"projectId"`
 	Name         string        `json:"name"`
 	Description  string        `json:"description"`
+	Env          string        `json:"env"`
 	Environments []Environment `json:"environments"`
 }
 
@@ -167,6 +168,56 @@ func (c *DokployClient) UpdateProject(id, name, description string) (*Project, e
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (c *DokployClient) UpdateProjectEnv(projectID string, updateFn func(envMap map[string]string)) error {
+	var lastErr error
+
+	for i := 0; i < 5; i++ {
+		project, err := c.GetProject(projectID)
+		if err != nil {
+			return err
+		}
+
+		envMap := ParseEnv(project.Env)
+		originalEnvStr := project.Env
+
+		updateFn(envMap)
+
+		newEnvStr := formatEnv(envMap)
+		if newEnvStr == originalEnvStr {
+			return nil
+		}
+
+		payload := map[string]interface{}{
+			"projectId":   projectID,
+			"name":        project.Name,
+			"description": project.Description,
+			"env":         newEnvStr,
+		}
+
+		_, err = c.doRequest("POST", "project.update", payload)
+		if err != nil {
+			lastErr = err
+			time.Sleep(time.Duration(100*(i+1)) * time.Millisecond)
+			continue
+		}
+
+		verifyProject, err := c.GetProject(projectID)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to verify environment update: %w", err)
+			time.Sleep(time.Duration(100*(i+1)) * time.Millisecond)
+			continue
+		}
+
+		if verifyProject.Env == newEnvStr {
+			return nil
+		}
+
+		lastErr = fmt.Errorf("environment update conflict, retrying")
+	}
+
+	return lastErr
 }
 
 // --- Environment ---
