@@ -74,6 +74,9 @@ func (r *ApplicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"project_id": schema.StringAttribute{
 				Required: true,
@@ -612,6 +615,17 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	var state ApplicationResourceModel
+	diags = req.State.Get(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if plan.ID.IsUnknown() || plan.ID.IsNull() || plan.ID.ValueString() == "" {
+		plan.ID = state.ID
 	}
 
 	if plan.Branch.IsUnknown() {

@@ -489,11 +489,23 @@ func (c *DokployClient) UpdateApplication(app Application) (*Application, error)
 		return nil, err
 	}
 
-	var result Application
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, err
+	if strings.TrimSpace(string(resp)) == "true" {
+		return c.GetApplication(app.ID)
 	}
-	return &result, nil
+
+	var wrapper struct {
+		Application Application `json:"application"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err == nil && wrapper.Application.ID != "" {
+		return &wrapper.Application, nil
+	}
+
+	var result Application
+	if err := json.Unmarshal(resp, &result); err == nil {
+		return &result, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse application.update response for application %s: %s", app.ID, string(resp))
 }
 
 func (c *DokployClient) DeleteApplication(id string) error {
