@@ -309,6 +309,7 @@ type Application struct {
 	Env               string   `json:"env"`
 	Domains           []Domain `json:"domains"`
 	Ports             []Port   `json:"ports"`
+	Mounts            []Mount  `json:"mounts"`
 	AutoDeploy        bool     `json:"autoDeploy"`
 	// Enhanced fields
 	SourceType         string `json:"sourceType"`
@@ -559,6 +560,215 @@ func (c *DokployClient) StopApplication(id string) error {
 	}
 	_, err := c.doRequest("POST", "application.stop", payload)
 	return err
+}
+
+// --- Mount ---
+
+type Mount struct {
+	ID            string `json:"mountId"`
+	ApplicationID string `json:"applicationId"`
+	MountType     string `json:"mountType"`
+	Type          string `json:"type"`
+	MountPath     string `json:"mountPath"`
+	VolumeName    string `json:"volumeName"`
+	HostPath      string `json:"hostPath"`
+	ServiceType   string `json:"serviceType"`
+	ServiceID     string `json:"serviceId"`
+}
+
+func (c *DokployClient) CreateMount(mount Mount) (*Mount, error) {
+	mountType := strings.TrimSpace(mount.MountType)
+	if mountType == "" {
+		mountType = strings.TrimSpace(mount.Type)
+	}
+	if mountType == "" {
+		mountType = "volume"
+	}
+
+	payload := map[string]interface{}{
+		"type":        mountType,
+		"serviceType": "application",
+		"serviceId":   mount.ApplicationID,
+		"mountPath":   mount.MountPath,
+	}
+	if strings.TrimSpace(mount.VolumeName) != "" {
+		payload["volumeName"] = mount.VolumeName
+	}
+	if strings.TrimSpace(mount.HostPath) != "" {
+		payload["hostPath"] = mount.HostPath
+	}
+
+	resp, err := c.doRequest("POST", "mounts.create", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	var wrapper struct {
+		Mount Mount `json:"mount"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err == nil && strings.TrimSpace(wrapper.Mount.ID) != "" {
+		return &wrapper.Mount, nil
+	}
+
+	var result Mount
+	if err := json.Unmarshal(resp, &result); err == nil && strings.TrimSpace(result.ID) != "" {
+		return &result, nil
+	}
+
+	if strings.TrimSpace(string(resp)) == "true" {
+		created, err := c.findMountBySignature(mount.ApplicationID, mountType, mount.MountPath, mount.VolumeName)
+		if err == nil {
+			return created, nil
+		}
+
+		// Some Dokploy versions return true from mounts.create while mount listings
+		// are not yet queryable. Return requested shape to avoid false negatives.
+		return &Mount{
+			ApplicationID: mount.ApplicationID,
+			MountType:     mountType,
+			Type:          mountType,
+			MountPath:     mount.MountPath,
+			VolumeName:    mount.VolumeName,
+			HostPath:      mount.HostPath,
+			ServiceType:   "application",
+			ServiceID:     mount.ApplicationID,
+		}, nil
+	}
+
+	created, err := c.findMountBySignature(mount.ApplicationID, mountType, mount.MountPath, mount.VolumeName)
+	if err == nil {
+		return created, nil
+	}
+
+	// Some Dokploy versions acknowledge writes before mount listing is consistent.
+	// Return the requested mount shape so caller can continue without hard-failing.
+	return &Mount{
+		ApplicationID: mount.ApplicationID,
+		MountType:     mountType,
+		Type:          mountType,
+		MountPath:     mount.MountPath,
+		VolumeName:    mount.VolumeName,
+		HostPath:      mount.HostPath,
+		ServiceType:   "application",
+		ServiceID:     mount.ApplicationID,
+	}, nil
+}
+
+func (c *DokployClient) findMountBySignature(applicationID, mountType, mountPath, volumeName string) (*Mount, error) {
+	var lastErr error
+	for i := 0; i < 8; i++ {
+		mounts, err := c.ListMountsByApplication(applicationID)
+		if err != nil {
+			lastErr = err
+			time.Sleep(time.Duration(100*(i+1)) * time.Millisecond)
+			continue
+		}
+
+		for _, existing := range mounts {
+			existingType := strings.TrimSpace(existing.MountType)
+			if existingType == "" {
+				existingType = strings.TrimSpace(existing.Type)
+			}
+			mountTypeMatches := strings.TrimSpace(mountType) == "" || strings.EqualFold(existingType, mountType)
+
+			existingPath := strings.TrimSuffix(strings.TrimSpace(existing.MountPath), "/")
+			requestedPath := strings.TrimSuffix(strings.TrimSpace(mountPath), "/")
+			pathMatches := existingPath == requestedPath
+
+			existingVolume := strings.TrimSpace(existing.VolumeName)
+			requestedVolume := strings.TrimSpace(volumeName)
+			volumeNameMatches := requestedVolume == "" ||
+				existingVolume == requestedVolume ||
+				strings.HasSuffix(existingVolume, "_"+requestedVolume) ||
+				strings.HasPrefix(existingVolume, requestedVolume+"_")
+
+			if mountTypeMatches && pathMatches && volumeNameMatches {
+				return &existing, nil
+			}
+		}
+
+		time.Sleep(time.Duration(100*(i+1)) * time.Millisecond)
+	}
+
+	if lastErr != nil {
+		return nil, fmt.Errorf("mount created but mount lookup failed for application %s: %w", applicationID, lastErr)
+	}
+
+	return nil, fmt.Errorf(
+		"mount created but not found on application %s (mountType=%q, mountPath=%q, volumeName=%q)",
+		applicationID,
+		mountType,
+		mountPath,
+		volumeName,
+	)
+}
+
+func (c *DokployClient) ListMountsByApplication(applicationID string) ([]Mount, error) {
+	endpoint := fmt.Sprintf("mounts.allNamedByApplicationId?applicationId=%s", applicationID)
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	if trimmed := strings.TrimSpace(string(resp)); trimmed == "" || trimmed == "null" || trimmed == "true" || trimmed == "false" {
+		return []Mount{}, nil
+	}
+
+	var wrapper struct {
+		Mounts []Mount `json:"mounts"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err == nil && wrapper.Mounts != nil {
+		return wrapper.Mounts, nil
+	}
+
+	var dataWrapper struct {
+		Data []Mount `json:"data"`
+	}
+	if err := json.Unmarshal(resp, &dataWrapper); err == nil && dataWrapper.Data != nil {
+		return dataWrapper.Data, nil
+	}
+
+	var direct []Mount
+	if err := json.Unmarshal(resp, &direct); err == nil {
+		return direct, nil
+	}
+
+	var named map[string]Mount
+	if err := json.Unmarshal(resp, &named); err == nil && named != nil {
+		mounts := make([]Mount, 0, len(named))
+		for _, mount := range named {
+			mounts = append(mounts, mount)
+		}
+		return mounts, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse mounts.allNamedByApplicationId response: %s", string(resp))
+}
+
+func (c *DokployClient) DeleteMount(id string) error {
+	payload := map[string]string{
+		"mountId": id,
+	}
+	_, err := c.doRequest("POST", "mounts.remove", payload)
+	if err == nil {
+		return nil
+	}
+
+	_, fallbackErr := c.doRequest("POST", "mount.delete", payload)
+	if fallbackErr == nil {
+		return nil
+	}
+
+	_, fallbackDeleteErr := c.doRequest("POST", "mounts.delete", payload)
+	if fallbackDeleteErr == nil {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"mounts.remove failed: %w; mount.delete fallback failed: %v; mounts.delete fallback failed: %v",
+		err,
+		fallbackErr,
+		fallbackDeleteErr,
+	)
 }
 
 // --- Compose ---

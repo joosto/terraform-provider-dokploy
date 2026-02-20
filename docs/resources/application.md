@@ -41,6 +41,7 @@ description: |-
 - `github_owner` (String)
 - `github_repository` (String)
 - `github_watch_paths` (List of String)
+- `mounts` (Attributes List) (see [below for nested schema](#nestedatt--mounts))
 - `password` (String, Sensitive)
 - `ports` (Attributes List) Port bindings to create before deployment is triggered. Changes force replacement. (see [below for nested schema](#nestedatt--ports))
 - `repository_url` (String)
@@ -51,6 +52,18 @@ description: |-
 ### Read-Only
 
 - `id` (String) The ID of this resource.
+
+<a id="nestedatt--mounts"></a>
+### Nested Schema for `mounts`
+
+Required:
+
+- `mount_path` (String)
+- `volume_name` (String)
+
+Optional:
+
+- `mount_type` (String)
 
 <a id="nestedatt--ports"></a>
 ### Nested Schema for `ports`

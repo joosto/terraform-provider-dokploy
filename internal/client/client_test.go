@@ -99,6 +99,173 @@ func TestDeleteApplication_ReturnsErrorWhenDeleteAndRemoveFail(t *testing.T) {
 	}
 }
 
+func TestCreateMount_UsesMountsCreateEndpointAndPayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mounts.create":
+			var payload map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("failed to decode payload: %v", err)
+			}
+
+			if payload["serviceId"] != "app-123" {
+				t.Fatalf("unexpected serviceId: %#v", payload["serviceId"])
+			}
+			if payload["type"] != "volume" {
+				t.Fatalf("unexpected type: %#v", payload["type"])
+			}
+			if payload["serviceType"] != "application" {
+				t.Fatalf("unexpected serviceType: %#v", payload["serviceType"])
+			}
+			if payload["mountPath"] != "/data" {
+				t.Fatalf("unexpected mountPath: %#v", payload["mountPath"])
+			}
+			if payload["volumeName"] != "rssmate-sqlite-data" {
+				t.Fatalf("unexpected volumeName: %#v", payload["volumeName"])
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"mount":{"mountId":"mount-123","applicationId":"app-123","mountType":"volume","mountPath":"/data","volumeName":"rssmate-sqlite-data"}}`))
+		default:
+			t.Fatalf("unexpected endpoint called: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	mount, err := c.CreateMount(Mount{
+		ApplicationID: "app-123",
+		MountType:     "volume",
+		MountPath:     "/data",
+		VolumeName:    "rssmate-sqlite-data",
+	})
+	if err != nil {
+		t.Fatalf("CreateMount returned error: %v", err)
+	}
+	if mount.ID != "mount-123" {
+		t.Fatalf("unexpected mount ID: got %q want %q", mount.ID, "mount-123")
+	}
+}
+
+func TestCreateMount_FallbackLookupOnBooleanResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mounts.create":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`true`))
+		case "/mounts.allNamedByApplicationId":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"mounts":[{"mountId":"mount-lookup","serviceId":"app-123","serviceType":"application","type":"volume","mountPath":"/data","volumeName":"rssmate-sqlite-data"}]}`))
+		default:
+			t.Fatalf("unexpected endpoint called: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	mount, err := c.CreateMount(Mount{
+		ApplicationID: "app-123",
+		MountType:     "volume",
+		MountPath:     "/data",
+		VolumeName:    "rssmate-sqlite-data",
+	})
+	if err != nil {
+		t.Fatalf("CreateMount returned error: %v", err)
+	}
+	if mount.ID != "mount-lookup" {
+		t.Fatalf("unexpected mount ID: got %q want %q", mount.ID, "mount-lookup")
+	}
+}
+
+func TestCreateMount_BooleanResponseWithEmptyLookupDoesNotFail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mounts.create":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`true`))
+		case "/mounts.allNamedByApplicationId":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(``))
+		default:
+			t.Fatalf("unexpected endpoint called: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	mount, err := c.CreateMount(Mount{
+		ApplicationID: "app-123",
+		MountType:     "volume",
+		MountPath:     "/data",
+		VolumeName:    "rssmate-sqlite-data",
+	})
+	if err != nil {
+		t.Fatalf("CreateMount returned error: %v", err)
+	}
+	if mount.ApplicationID != "app-123" {
+		t.Fatalf("unexpected application ID: got %q want %q", mount.ApplicationID, "app-123")
+	}
+	if mount.MountPath != "/data" {
+		t.Fatalf("unexpected mount path: got %q want %q", mount.MountPath, "/data")
+	}
+	if mount.VolumeName != "rssmate-sqlite-data" {
+		t.Fatalf("unexpected volume name: got %q want %q", mount.VolumeName, "rssmate-sqlite-data")
+	}
+}
+
+func TestDeleteMount_UsesRemoveEndpoint(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Path)
+		switch r.URL.Path {
+		case "/mounts.remove":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`true`))
+		default:
+			t.Fatalf("unexpected endpoint called: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	if err := c.DeleteMount("mount-123"); err != nil {
+		t.Fatalf("DeleteMount returned error: %v", err)
+	}
+
+	expected := []string{"/mounts.remove"}
+	if !reflect.DeepEqual(calls, expected) {
+		t.Fatalf("unexpected call order: got %v want %v", calls, expected)
+	}
+}
+
+func TestDeleteMount_FallsBackToLegacyEndpoint(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Path)
+		switch r.URL.Path {
+		case "/mounts.remove":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`not found`))
+		case "/mount.delete":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`true`))
+		default:
+			t.Fatalf("unexpected endpoint called: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	if err := c.DeleteMount("mount-123"); err != nil {
+		t.Fatalf("DeleteMount returned error: %v", err)
+	}
+
+	expected := []string{"/mounts.remove", "/mount.delete"}
+	if !reflect.DeepEqual(calls, expected) {
+		t.Fatalf("unexpected call order: got %v want %v", calls, expected)
+	}
+}
+
 func TestUpdateProjectEnv_UpdatesProjectEnvironment(t *testing.T) {
 	projectEnv := "A=1\nB=2"
 	updateCalls := 0

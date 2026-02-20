@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -56,6 +57,7 @@ type ApplicationResourceModel struct {
 	EnableSubmodules types.Bool   `tfsdk:"enable_submodules"`
 	TriggerType      types.String `tfsdk:"trigger_type"`
 	Ports            types.List   `tfsdk:"ports"`
+	Mounts           types.List   `tfsdk:"mounts"`
 }
 
 type ApplicationPortResourceModel struct {
@@ -63,6 +65,35 @@ type ApplicationPortResourceModel struct {
 	TargetPort    types.Int64  `tfsdk:"target_port"`
 	Protocol      types.String `tfsdk:"protocol"`
 	PublishMode   types.String `tfsdk:"publish_mode"`
+}
+
+type ApplicationMountResourceModel struct {
+	MountType  types.String `tfsdk:"mount_type"`
+	MountPath  types.String `tfsdk:"mount_path"`
+	VolumeName types.String `tfsdk:"volume_name"`
+}
+
+var applicationMountAttrTypes = map[string]attr.Type{
+	"mount_type":  types.StringType,
+	"mount_path":  types.StringType,
+	"volume_name": types.StringType,
+}
+
+var applicationMountObjectType = types.ObjectType{
+	AttrTypes: applicationMountAttrTypes,
+}
+
+func normalizeApplicationMountPlan(plan ApplicationMountResourceModel) client.Mount {
+	mountType := strings.TrimSpace(plan.MountType.ValueString())
+	if plan.MountType.IsNull() || plan.MountType.IsUnknown() || mountType == "" {
+		mountType = "volume"
+	}
+
+	return client.Mount{
+		MountType:  mountType,
+		MountPath:  strings.TrimSpace(plan.MountPath.ValueString()),
+		VolumeName: strings.TrimSpace(plan.VolumeName.ValueString()),
+	}
 }
 
 func (r *ApplicationResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -168,6 +199,26 @@ func (r *ApplicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 					},
 				},
 			},
+			"mounts": schema.ListNestedAttribute{
+				Optional: true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
+				},
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"mount_type": schema.StringAttribute{
+							Optional: true,
+							Computed: true,
+						},
+						"mount_path": schema.StringAttribute{
+							Required: true,
+						},
+						"volume_name": schema.StringAttribute{
+							Required: true,
+						},
+					},
+				},
+			},
 			"github_repository": schema.StringAttribute{
 				Optional: true,
 			},
@@ -241,6 +292,14 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 			return
 		}
 	}
+	var managedMounts []ApplicationMountResourceModel
+	if !plan.Mounts.IsNull() && !plan.Mounts.IsUnknown() {
+		diags = plan.Mounts.ElementsAs(ctx, &managedMounts, false)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
 
 	autoDeployConfigured := !plan.AutoDeploy.IsNull() && !plan.AutoDeploy.IsUnknown()
 	desiredAutoDeploy := false
@@ -248,8 +307,8 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 		desiredAutoDeploy = plan.AutoDeploy.ValueBool()
 	}
 	createAutoDeploy := desiredAutoDeploy
-	if len(managedPorts) > 0 && desiredAutoDeploy {
-		// Defer auto deploy until ports are created so first deployment has networking in place.
+	if (len(managedPorts) > 0 || len(managedMounts) > 0) && desiredAutoDeploy {
+		// Defer auto deploy until network/storage dependencies are created.
 		createAutoDeploy = false
 	}
 
@@ -342,6 +401,22 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 			return
 		}
 	}
+	for i, mountPlan := range managedMounts {
+		managedMount := normalizeApplicationMountPlan(mountPlan)
+		_, err := r.client.CreateMount(client.Mount{
+			ApplicationID: createdApp.ID,
+			MountType:     managedMount.MountType,
+			MountPath:     managedMount.MountPath,
+			VolumeName:    managedMount.VolumeName,
+		})
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error creating application mount",
+				fmt.Sprintf("failed creating mounts[%d] for application %s: %s", i, createdApp.ID, err.Error()),
+			)
+			return
+		}
+	}
 
 	// Save GitHub provider if GitHub fields are provided
 	if !plan.GithubID.IsNull() && !plan.GithubID.IsUnknown() && plan.GithubID.ValueString() != "" {
@@ -386,7 +461,7 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 		}
 	}
 
-	if len(managedPorts) > 0 && desiredAutoDeploy && !createdApp.AutoDeploy {
+	if (len(managedPorts) > 0 || len(managedMounts) > 0) && desiredAutoDeploy && !createdApp.AutoDeploy {
 		updatedApp, err := r.client.UpdateApplication(client.Application{
 			ID:                 createdApp.ID,
 			Name:               app.Name,
@@ -410,7 +485,7 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 		if err != nil {
 			resp.Diagnostics.AddWarning(
 				"Auto Deploy Activation Failed",
-				fmt.Sprintf("Application and ports were created, but enabling auto_deploy failed: %s", err.Error()),
+				fmt.Sprintf("Application, ports, and mounts were created, but enabling auto_deploy failed: %s", err.Error()),
 			)
 		} else {
 			createdApp = updatedApp
@@ -424,8 +499,8 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 	}
 
 	shouldTriggerDeploy := !plan.DeployOnCreate.IsNull() && plan.DeployOnCreate.ValueBool()
-	// For inline managed ports with deferred autoDeploy, avoid duplicate deploys.
-	if shouldTriggerDeploy && !(len(managedPorts) > 0 && createdApp.AutoDeploy) {
+	// For inline managed ports/mounts with deferred autoDeploy, avoid duplicate deploys.
+	if shouldTriggerDeploy && !((len(managedPorts) > 0 || len(managedMounts) > 0) && createdApp.AutoDeploy) {
 		err := r.client.DeployApplication(createdApp.ID)
 		if err != nil {
 			resp.Diagnostics.AddWarning("Deployment Trigger Failed", fmt.Sprintf("Application created but deployment failed to trigger: %s", err.Error()))
@@ -603,6 +678,42 @@ func (r *ApplicationResource) Read(ctx context.Context, req resource.ReadRequest
 	// EnableSubmodules - optional boolean, only update if it was set in config
 	if !state.EnableSubmodules.IsNull() {
 		state.EnableSubmodules = types.BoolValue(app.EnableSubmodules)
+	}
+
+	// Optional mounts - only update if mounts were configured in Terraform.
+	if !state.Mounts.IsNull() {
+		if len(app.Mounts) == 0 {
+			state.Mounts = types.ListNull(applicationMountObjectType)
+		} else {
+			mountObjects := make([]attr.Value, 0, len(app.Mounts))
+			for _, mount := range app.Mounts {
+				mountType := strings.TrimSpace(mount.MountType)
+				if mountType == "" {
+					mountType = "volume"
+				}
+
+				mountObj, mountDiags := types.ObjectValue(
+					applicationMountAttrTypes,
+					map[string]attr.Value{
+						"mount_type":  types.StringValue(mountType),
+						"mount_path":  types.StringValue(mount.MountPath),
+						"volume_name": types.StringValue(mount.VolumeName),
+					},
+				)
+				resp.Diagnostics.Append(mountDiags...)
+				if resp.Diagnostics.HasError() {
+					return
+				}
+				mountObjects = append(mountObjects, mountObj)
+			}
+
+			mountsList, mountDiags := types.ListValue(applicationMountObjectType, mountObjects)
+			resp.Diagnostics.Append(mountDiags...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			state.Mounts = mountsList
+		}
 	}
 
 	diags = resp.State.Set(ctx, state)
