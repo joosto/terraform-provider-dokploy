@@ -18,8 +18,8 @@ description: |-
 ### Optional
 
 - `application_id` (String)
-- `compose_id` (String)
 - `certificate_provider` (String) Certificate provider for the domain. Supported values: letsencrypt, none, custom.
+- `compose_id` (String)
 - `generate_traefik_me` (Boolean) If true, generates a traefik.me domain for the application.
 - `host` (String)
 - `https` (Boolean)

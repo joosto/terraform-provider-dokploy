@@ -9,6 +9,14 @@ import (
 	"testing"
 )
 
+func boolPointer(v bool) *bool {
+	return &v
+}
+
+func int64Pointer(v int64) *int64 {
+	return &v
+}
+
 func TestDeleteApplication_UsesDeleteEndpoint(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +104,138 @@ func TestDeleteApplication_ReturnsErrorWhenDeleteAndRemoveFail(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "application.remove fallback failed") {
 		t.Fatalf("expected remove fallback failure in error, got: %v", err)
+	}
+}
+
+func TestCreateApplication_IncludesPreviewPayload(t *testing.T) {
+	var updatePayload map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/application.create":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"application":{"applicationId":"app-123"}}`))
+		case "/application.update":
+			if err := json.NewDecoder(r.Body).Decode(&updatePayload); err != nil {
+				t.Fatalf("failed to decode application.update payload: %v", err)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"application":{"applicationId":"app-123","name":"rssmate"}}`))
+		default:
+			t.Fatalf("unexpected endpoint called: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	_, err := c.CreateApplication(Application{
+		Name:                                  "rssmate",
+		EnvironmentID:                         "env-123",
+		Branch:                                "main",
+		BuildType:                             "dockerfile",
+		SourceType:                            "github",
+		AutoDeploy:                            true,
+		IsPreviewDeploymentsActive:            boolPointer(true),
+		PreviewWildcard:                       "*.vanoorschot.dev",
+		PreviewPort:                           int64Pointer(8084),
+		PreviewPath:                           "/",
+		PreviewHTTPS:                          boolPointer(true),
+		PreviewCertificateType:                "letsencrypt",
+		PreviewLimit:                          int64Pointer(3),
+		PreviewRequireCollaboratorPermissions: boolPointer(true),
+		PreviewEnv:                            "FEATURE_FLAG=1",
+		PreviewBuildArgs:                      "VERSION=preview",
+		PreviewLabels:                         []string{"preview=true"},
+	})
+	if err != nil {
+		t.Fatalf("CreateApplication returned error: %v", err)
+	}
+
+	if updatePayload["isPreviewDeploymentsActive"] != true {
+		t.Fatalf("missing isPreviewDeploymentsActive in payload: %#v", updatePayload["isPreviewDeploymentsActive"])
+	}
+	if updatePayload["previewWildcard"] != "*.vanoorschot.dev" {
+		t.Fatalf("missing previewWildcard in payload: %#v", updatePayload["previewWildcard"])
+	}
+	if updatePayload["previewPort"] != float64(8084) {
+		t.Fatalf("missing previewPort in payload: %#v", updatePayload["previewPort"])
+	}
+	if updatePayload["previewPath"] != "/" {
+		t.Fatalf("missing previewPath in payload: %#v", updatePayload["previewPath"])
+	}
+	if updatePayload["previewHttps"] != true {
+		t.Fatalf("missing previewHttps in payload: %#v", updatePayload["previewHttps"])
+	}
+	if updatePayload["previewCertificateType"] != "letsencrypt" {
+		t.Fatalf("missing previewCertificateType in payload: %#v", updatePayload["previewCertificateType"])
+	}
+	if updatePayload["previewLimit"] != float64(3) {
+		t.Fatalf("missing previewLimit in payload: %#v", updatePayload["previewLimit"])
+	}
+	if updatePayload["previewRequireCollaboratorPermissions"] != true {
+		t.Fatalf("missing previewRequireCollaboratorPermissions in payload: %#v", updatePayload["previewRequireCollaboratorPermissions"])
+	}
+	if updatePayload["previewEnv"] != "FEATURE_FLAG=1" {
+		t.Fatalf("missing previewEnv in payload: %#v", updatePayload["previewEnv"])
+	}
+	if updatePayload["previewBuildArgs"] != "VERSION=preview" {
+		t.Fatalf("missing previewBuildArgs in payload: %#v", updatePayload["previewBuildArgs"])
+	}
+	previewLabels, ok := updatePayload["previewLabels"].([]interface{})
+	if !ok || len(previewLabels) != 1 || previewLabels[0] != "preview=true" {
+		t.Fatalf("missing previewLabels in payload: %#v", updatePayload["previewLabels"])
+	}
+}
+
+func TestUpdateApplication_SendsExplicitFalseAndZeroPreviewValues(t *testing.T) {
+	var updatePayload map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/application.update":
+			if err := json.NewDecoder(r.Body).Decode(&updatePayload); err != nil {
+				t.Fatalf("failed to decode application.update payload: %v", err)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"application":{"applicationId":"app-123","name":"rssmate","autoDeploy":false}}`))
+		default:
+			t.Fatalf("unexpected endpoint called: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	_, err := c.UpdateApplication(Application{
+		ID:                                    "app-123",
+		Name:                                  "rssmate",
+		Branch:                                "main",
+		BuildType:                             "dockerfile",
+		SourceType:                            "github",
+		AutoDeploy:                            false,
+		IsPreviewDeploymentsActive:            boolPointer(false),
+		PreviewPort:                           int64Pointer(0),
+		PreviewHTTPS:                          boolPointer(false),
+		PreviewLimit:                          int64Pointer(0),
+		PreviewRequireCollaboratorPermissions: boolPointer(false),
+	})
+	if err != nil {
+		t.Fatalf("UpdateApplication returned error: %v", err)
+	}
+
+	if updatePayload["isPreviewDeploymentsActive"] != false {
+		t.Fatalf("expected false isPreviewDeploymentsActive, got: %#v", updatePayload["isPreviewDeploymentsActive"])
+	}
+	if updatePayload["previewPort"] != float64(0) {
+		t.Fatalf("expected zero previewPort, got: %#v", updatePayload["previewPort"])
+	}
+	if updatePayload["previewHttps"] != false {
+		t.Fatalf("expected false previewHttps, got: %#v", updatePayload["previewHttps"])
+	}
+	if updatePayload["previewLimit"] != float64(0) {
+		t.Fatalf("expected zero previewLimit, got: %#v", updatePayload["previewLimit"])
+	}
+	if updatePayload["previewRequireCollaboratorPermissions"] != false {
+		t.Fatalf("expected false previewRequireCollaboratorPermissions, got: %#v", updatePayload["previewRequireCollaboratorPermissions"])
 	}
 }
 

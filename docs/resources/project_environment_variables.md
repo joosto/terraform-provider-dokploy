@@ -14,11 +14,13 @@ Manages all project-level environment variables as a single resource.
 
 ```terraform
 resource "dokploy_project" "example" {
-  name = "My Project"
+  name        = "My Project"
+  description = "A project managed by Terraform"
 }
 
 resource "dokploy_project_environment_variables" "example" {
   project_id = dokploy_project.example.id
+
   variables = {
     DATABASE_URL = "postgres://db:5432/app"
     LOG_LEVEL    = "info"
@@ -42,6 +44,9 @@ resource "dokploy_project_environment_variables" "example" {
 
 Import is supported using the following syntax:
 
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
 ```shell
+# Project environment variables can be imported using the project ID
 terraform import dokploy_project_environment_variables.example "project-id-123"
 ```

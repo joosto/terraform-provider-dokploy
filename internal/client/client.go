@@ -328,6 +328,19 @@ type Application struct {
 	GithubWatchPaths []string `json:"watchPaths"`
 	EnableSubmodules bool     `json:"enableSubmodules"`
 	TriggerType      string   `json:"triggerType"`
+	// Preview deployment fields
+	IsPreviewDeploymentsActive            *bool    `json:"isPreviewDeploymentsActive"`
+	PreviewWildcard                       string   `json:"previewWildcard"`
+	PreviewPort                           *int64   `json:"previewPort"`
+	PreviewPath                           string   `json:"previewPath"`
+	PreviewHTTPS                          *bool    `json:"previewHttps"`
+	PreviewCertificateType                string   `json:"previewCertificateType"`
+	PreviewCustomCertResolver             string   `json:"previewCustomCertResolver"`
+	PreviewLimit                          *int64   `json:"previewLimit"`
+	PreviewRequireCollaboratorPermissions *bool    `json:"previewRequireCollaboratorPermissions"`
+	PreviewEnv                            string   `json:"previewEnv"`
+	PreviewBuildArgs                      string   `json:"previewBuildArgs"`
+	PreviewLabels                         []string `json:"previewLabels"`
 }
 
 func (c *DokployClient) CreateApplication(app Application) (*Application, error) {
@@ -396,6 +409,7 @@ func (c *DokployClient) CreateApplication(app Application) (*Application, error)
 	if app.Password != "" {
 		updatePayload["password"] = app.Password
 	}
+	addPreviewApplicationPayload(updatePayload, app)
 
 	// Ensure defaults
 	if app.SourceType == "" {
@@ -484,6 +498,7 @@ func (c *DokployClient) UpdateApplication(app Application) (*Application, error)
 	if app.EnvironmentID != "" {
 		payload["environmentId"] = app.EnvironmentID
 	}
+	addPreviewApplicationPayload(payload, app)
 
 	resp, err := c.doRequest("POST", "application.update", payload)
 	if err != nil {
@@ -507,6 +522,45 @@ func (c *DokployClient) UpdateApplication(app Application) (*Application, error)
 	}
 
 	return nil, fmt.Errorf("failed to parse application.update response for application %s: %s", app.ID, string(resp))
+}
+
+func addPreviewApplicationPayload(payload map[string]interface{}, app Application) {
+	if app.IsPreviewDeploymentsActive != nil {
+		payload["isPreviewDeploymentsActive"] = *app.IsPreviewDeploymentsActive
+	}
+	if app.PreviewWildcard != "" {
+		payload["previewWildcard"] = app.PreviewWildcard
+	}
+	if app.PreviewPort != nil {
+		payload["previewPort"] = *app.PreviewPort
+	}
+	if app.PreviewPath != "" {
+		payload["previewPath"] = app.PreviewPath
+	}
+	if app.PreviewHTTPS != nil {
+		payload["previewHttps"] = *app.PreviewHTTPS
+	}
+	if app.PreviewCertificateType != "" {
+		payload["previewCertificateType"] = app.PreviewCertificateType
+	}
+	if app.PreviewCustomCertResolver != "" {
+		payload["previewCustomCertResolver"] = app.PreviewCustomCertResolver
+	}
+	if app.PreviewLimit != nil {
+		payload["previewLimit"] = *app.PreviewLimit
+	}
+	if app.PreviewRequireCollaboratorPermissions != nil {
+		payload["previewRequireCollaboratorPermissions"] = *app.PreviewRequireCollaboratorPermissions
+	}
+	if app.PreviewEnv != "" {
+		payload["previewEnv"] = app.PreviewEnv
+	}
+	if app.PreviewBuildArgs != "" {
+		payload["previewBuildArgs"] = app.PreviewBuildArgs
+	}
+	if len(app.PreviewLabels) > 0 {
+		payload["previewLabels"] = app.PreviewLabels
+	}
 }
 
 func (c *DokployClient) DeleteApplication(id string) error {

@@ -41,9 +41,21 @@ description: |-
 - `github_owner` (String)
 - `github_repository` (String)
 - `github_watch_paths` (List of String)
+- `is_preview_deployments_active` (Boolean)
 - `mounts` (Attributes List) (see [below for nested schema](#nestedatt--mounts))
 - `password` (String, Sensitive)
-- `ports` (Attributes List) Port bindings to create before deployment is triggered. Changes force replacement. (see [below for nested schema](#nestedatt--ports))
+- `ports` (Attributes List) (see [below for nested schema](#nestedatt--ports))
+- `preview_build_args` (String)
+- `preview_certificate_type` (String)
+- `preview_custom_cert_resolver` (String)
+- `preview_env` (String)
+- `preview_https` (Boolean)
+- `preview_labels` (List of String)
+- `preview_limit` (Number)
+- `preview_path` (String)
+- `preview_port` (Number)
+- `preview_require_collaborator_permissions` (Boolean)
+- `preview_wildcard` (String)
 - `repository_url` (String)
 - `source_type` (String)
 - `trigger_type` (String)
@@ -64,6 +76,7 @@ Required:
 Optional:
 
 - `mount_type` (String)
+
 
 <a id="nestedatt--ports"></a>
 ### Nested Schema for `ports`
