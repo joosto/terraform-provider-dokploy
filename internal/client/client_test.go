@@ -17,6 +17,214 @@ func int64Pointer(v int64) *int64 {
 	return &v
 }
 
+func TestReadTraefikConfig_ParsesRawStringResponse(t *testing.T) {
+	expected := "entryPoints:\n  web:\n    address: :80\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/settings.readTraefikConfig" {
+			t.Fatalf("unexpected endpoint: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(expected))
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	got, err := c.ReadTraefikConfig(nil)
+	if err != nil {
+		t.Fatalf("ReadTraefikConfig returned error: %v", err)
+	}
+	if got != expected {
+		t.Fatalf("unexpected config: got %q want %q", got, expected)
+	}
+}
+
+func TestReadTraefikConfig_ParsesWrappedResponse(t *testing.T) {
+	expected := "http:\n  routers: {}\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/settings.readTraefikConfig" {
+			t.Fatalf("unexpected endpoint: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"traefikConfig":"http:\n  routers: {}\n"}}`))
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	got, err := c.ReadTraefikConfig(nil)
+	if err != nil {
+		t.Fatalf("ReadTraefikConfig returned error: %v", err)
+	}
+	if got != expected {
+		t.Fatalf("unexpected config: got %q want %q", got, expected)
+	}
+}
+
+func TestReadTraefikConfig_IncludesServerIDInQuery(t *testing.T) {
+	serverID := "srv_123"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/settings.readTraefikConfig" {
+			t.Fatalf("unexpected endpoint: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("serverId"); got != serverID {
+			t.Fatalf("unexpected serverId query: got %q want %q", got, serverID)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"traefikConfig":"http:\n  routers: {}\n"}`))
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	if _, err := c.ReadTraefikConfig(&serverID); err != nil {
+		t.Fatalf("ReadTraefikConfig returned error: %v", err)
+	}
+}
+
+func TestUpdateTraefikConfig_SendsExpectedPayload(t *testing.T) {
+	serverID := "srv_321"
+	expectedConfig := "http:\n  routers:\n    test: {}\n"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/settings.updateTraefikConfig" {
+			t.Fatalf("unexpected endpoint: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode payload: %v", err)
+		}
+
+		if got := payload["traefikConfig"]; got != expectedConfig {
+			t.Fatalf("unexpected traefikConfig: %#v", got)
+		}
+		if got := payload["serverId"]; got != serverID {
+			t.Fatalf("unexpected serverId: %#v", got)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	if err := c.UpdateTraefikConfig(&serverID, expectedConfig); err != nil {
+		t.Fatalf("UpdateTraefikConfig returned error: %v", err)
+	}
+}
+
+func TestReadWebServerTraefikConfig_UsesScopedEndpointAndKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/settings.readWebServerTraefikConfig" {
+			t.Fatalf("unexpected endpoint: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"webServerTraefikConfig":"http:\n  routers: {}\n"}`))
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	got, err := c.ReadWebServerTraefikConfig(nil)
+	if err != nil {
+		t.Fatalf("ReadWebServerTraefikConfig returned error: %v", err)
+	}
+	if got != "http:\n  routers: {}\n" {
+		t.Fatalf("unexpected config: %q", got)
+	}
+}
+
+func TestUpdateWebServerTraefikConfig_UsesScopedEndpointAndPayloadKey(t *testing.T) {
+	expectedConfig := "http:\n  routers:\n    dokploy-router-app: {}\n"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/settings.updateWebServerTraefikConfig" {
+			t.Fatalf("unexpected endpoint: %s", r.URL.Path)
+		}
+
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode payload: %v", err)
+		}
+
+		if got := payload["webServerTraefikConfig"]; got != expectedConfig {
+			t.Fatalf("unexpected webServerTraefikConfig payload: %#v", got)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	if err := c.UpdateWebServerTraefikConfig(nil, expectedConfig); err != nil {
+		t.Fatalf("UpdateWebServerTraefikConfig returned error: %v", err)
+	}
+}
+
+func TestUpdateMiddlewareTraefikConfig_UsesScopedEndpointAndPayloadKey(t *testing.T) {
+	expectedConfig := "http:\n  middlewares:\n    dokploy-tailnet-only: {}\n"
+	serverID := "srv_abc"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/settings.updateMiddlewareTraefikConfig" {
+			t.Fatalf("unexpected endpoint: %s", r.URL.Path)
+		}
+
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode payload: %v", err)
+		}
+
+		if got := payload["middlewareTraefikConfig"]; got != expectedConfig {
+			t.Fatalf("unexpected middlewareTraefikConfig payload: %#v", got)
+		}
+		if got := payload["serverId"]; got != serverID {
+			t.Fatalf("unexpected serverId: %#v", got)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	if err := c.UpdateMiddlewareTraefikConfig(&serverID, expectedConfig); err != nil {
+		t.Fatalf("UpdateMiddlewareTraefikConfig returned error: %v", err)
+	}
+}
+
+func TestReloadTraefik_SendsExpectedPayload(t *testing.T) {
+	serverID := "srv_654"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/settings.reloadTraefik" {
+			t.Fatalf("unexpected endpoint: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode payload: %v", err)
+		}
+
+		if got := payload["serverId"]; got != serverID {
+			t.Fatalf("unexpected serverId: %#v", got)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+
+	c := NewDokployClient(server.URL, "test-key")
+	if err := c.ReloadTraefik(&serverID); err != nil {
+		t.Fatalf("ReloadTraefik returned error: %v", err)
+	}
+}
+
 func TestDeleteApplication_UsesDeleteEndpoint(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

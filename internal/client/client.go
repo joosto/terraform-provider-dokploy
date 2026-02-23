@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -65,6 +66,221 @@ func (c *DokployClient) doRequest(method, endpoint string, body interface{}) ([]
 	}
 
 	return respBytes, nil
+}
+
+// --- Settings / Traefik ---
+
+func (c *DokployClient) ReadTraefikConfig(serverID *string) (string, error) {
+	return c.ReadScopedTraefikConfig("main", serverID)
+}
+
+func (c *DokployClient) UpdateTraefikConfig(serverID *string, config string) error {
+	return c.UpdateScopedTraefikConfig("main", serverID, config)
+}
+
+func (c *DokployClient) ReadWebServerTraefikConfig(serverID *string) (string, error) {
+	return c.ReadScopedTraefikConfig("web_server", serverID)
+}
+
+func (c *DokployClient) UpdateWebServerTraefikConfig(serverID *string, config string) error {
+	return c.UpdateScopedTraefikConfig("web_server", serverID, config)
+}
+
+func (c *DokployClient) ReadMiddlewareTraefikConfig(serverID *string) (string, error) {
+	return c.ReadScopedTraefikConfig("middleware", serverID)
+}
+
+func (c *DokployClient) UpdateMiddlewareTraefikConfig(serverID *string, config string) error {
+	return c.UpdateScopedTraefikConfig("middleware", serverID, config)
+}
+
+func (c *DokployClient) ReadScopedTraefikConfig(scope string, serverID *string) (string, error) {
+	normalizedScope, err := normalizeTraefikConfigScope(scope)
+	if err != nil {
+		return "", err
+	}
+
+	endpoint, err := traefikReadEndpointForScope(normalizedScope)
+	if err != nil {
+		return "", err
+	}
+
+	if serverID != nil && strings.TrimSpace(*serverID) != "" {
+		endpoint = fmt.Sprintf("%s?serverId=%s", endpoint, url.QueryEscape(strings.TrimSpace(*serverID)))
+	}
+
+	resp, err := c.doRequest("GET", endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return parseTraefikConfigResponse(resp)
+}
+
+func (c *DokployClient) UpdateScopedTraefikConfig(scope string, serverID *string, config string) error {
+	normalizedScope, err := normalizeTraefikConfigScope(scope)
+	if err != nil {
+		return err
+	}
+
+	endpoint, payloadKeys, err := traefikUpdateEndpointAndPayloadKeysForScope(normalizedScope)
+	if err != nil {
+		return err
+	}
+
+	basePayload := map[string]interface{}{}
+	if serverID != nil && strings.TrimSpace(*serverID) != "" {
+		basePayload["serverId"] = strings.TrimSpace(*serverID)
+	}
+
+	var lastErr error
+	for _, key := range payloadKeys {
+		payload := cloneMap(basePayload)
+		payload[key] = config
+		_, err := c.doRequest("POST", endpoint, payload)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+
+	return lastErr
+}
+
+func (c *DokployClient) ReloadTraefik(serverID *string) error {
+	payload := map[string]interface{}{}
+	if serverID != nil && strings.TrimSpace(*serverID) != "" {
+		payload["serverId"] = strings.TrimSpace(*serverID)
+	}
+
+	_, err := c.doRequest("POST", "settings.reloadTraefik", payload)
+	return err
+}
+
+func parseTraefikConfigResponse(resp []byte) (string, error) {
+	trimmed := strings.TrimSpace(string(resp))
+	if trimmed == "" || trimmed == "null" {
+		return "", nil
+	}
+
+	var asString string
+	if err := json.Unmarshal(resp, &asString); err == nil {
+		return asString, nil
+	}
+
+	var wrapper struct {
+		TraefikConfig           string `json:"traefikConfig"`
+		WebServerTraefikConfig  string `json:"webServerTraefikConfig"`
+		MiddlewareTraefikConfig string `json:"middlewareTraefikConfig"`
+		Config                  string `json:"config"`
+	}
+	if err := json.Unmarshal(resp, &wrapper); err == nil {
+		if wrapper.TraefikConfig != "" {
+			return wrapper.TraefikConfig, nil
+		}
+		if wrapper.WebServerTraefikConfig != "" {
+			return wrapper.WebServerTraefikConfig, nil
+		}
+		if wrapper.MiddlewareTraefikConfig != "" {
+			return wrapper.MiddlewareTraefikConfig, nil
+		}
+		if wrapper.Config != "" {
+			return wrapper.Config, nil
+		}
+	}
+
+	var generic map[string]interface{}
+	if err := json.Unmarshal(resp, &generic); err == nil {
+		if cfg, found := extractTraefikConfigValue(generic); found {
+			return cfg, nil
+		}
+	}
+
+	return string(resp), nil
+}
+
+func extractTraefikConfigValue(input map[string]interface{}) (string, bool) {
+	priorityKeys := []string{
+		"traefikConfig",
+		"webServerTraefikConfig",
+		"middlewareTraefikConfig",
+		"config",
+	}
+	for _, key := range priorityKeys {
+		if value, ok := input[key]; ok {
+			switch typed := value.(type) {
+			case string:
+				return typed, true
+			case map[string]interface{}:
+				if cfg, found := extractTraefikConfigValue(typed); found {
+					return cfg, true
+				}
+			default:
+				serialized, err := json.Marshal(typed)
+				if err == nil {
+					return string(serialized), true
+				}
+			}
+		}
+	}
+
+	if data, ok := input["data"]; ok {
+		if nested, ok := data.(map[string]interface{}); ok {
+			if cfg, found := extractTraefikConfigValue(nested); found {
+				return cfg, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+func normalizeTraefikConfigScope(scope string) (string, error) {
+	normalized := strings.TrimSpace(strings.ToLower(scope))
+	switch normalized {
+	case "", "main":
+		return "main", nil
+	case "web_server", "webserver", "web-server":
+		return "web_server", nil
+	case "middleware":
+		return "middleware", nil
+	default:
+		return "", fmt.Errorf("invalid Traefik config scope %q (supported: main, web_server, middleware)", scope)
+	}
+}
+
+func traefikReadEndpointForScope(scope string) (string, error) {
+	switch scope {
+	case "main":
+		return "settings.readTraefikConfig", nil
+	case "web_server":
+		return "settings.readWebServerTraefikConfig", nil
+	case "middleware":
+		return "settings.readMiddlewareTraefikConfig", nil
+	default:
+		return "", fmt.Errorf("unsupported Traefik config scope: %s", scope)
+	}
+}
+
+func traefikUpdateEndpointAndPayloadKeysForScope(scope string) (string, []string, error) {
+	switch scope {
+	case "main":
+		return "settings.updateTraefikConfig", []string{"traefikConfig", "config"}, nil
+	case "web_server":
+		return "settings.updateWebServerTraefikConfig", []string{"webServerTraefikConfig", "traefikConfig", "config"}, nil
+	case "middleware":
+		return "settings.updateMiddlewareTraefikConfig", []string{"middlewareTraefikConfig", "traefikConfig", "config"}, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported Traefik config scope: %s", scope)
+	}
+}
+
+func cloneMap(input map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 // --- User ---
