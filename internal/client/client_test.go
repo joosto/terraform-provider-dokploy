@@ -354,6 +354,9 @@ func TestCreateApplication_IncludesPreviewPayload(t *testing.T) {
 		PreviewEnv:                            "FEATURE_FLAG=1",
 		PreviewBuildArgs:                      "VERSION=preview",
 		PreviewLabels:                         []string{"preview=true"},
+		LabelsSwarm: map[string]string{
+			"traefik.enable": "true",
+		},
 	})
 	if err != nil {
 		t.Fatalf("CreateApplication returned error: %v", err)
@@ -393,6 +396,13 @@ func TestCreateApplication_IncludesPreviewPayload(t *testing.T) {
 	if !ok || len(previewLabels) != 1 || previewLabels[0] != "preview=true" {
 		t.Fatalf("missing previewLabels in payload: %#v", updatePayload["previewLabels"])
 	}
+	labelsSwarm, ok := updatePayload["labelsSwarm"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing labelsSwarm in payload: %#v", updatePayload["labelsSwarm"])
+	}
+	if labelsSwarm["traefik.enable"] != "true" {
+		t.Fatalf("unexpected labelsSwarm payload: %#v", updatePayload["labelsSwarm"])
+	}
 }
 
 func TestUpdateApplication_SendsExplicitFalseAndZeroPreviewValues(t *testing.T) {
@@ -425,6 +435,9 @@ func TestUpdateApplication_SendsExplicitFalseAndZeroPreviewValues(t *testing.T) 
 		PreviewHTTPS:                          boolPointer(false),
 		PreviewLimit:                          int64Pointer(0),
 		PreviewRequireCollaboratorPermissions: boolPointer(false),
+		LabelsSwarm: map[string]string{
+			"traefik.enable": "true",
+		},
 	})
 	if err != nil {
 		t.Fatalf("UpdateApplication returned error: %v", err)
@@ -444,6 +457,13 @@ func TestUpdateApplication_SendsExplicitFalseAndZeroPreviewValues(t *testing.T) 
 	}
 	if updatePayload["previewRequireCollaboratorPermissions"] != false {
 		t.Fatalf("expected false previewRequireCollaboratorPermissions, got: %#v", updatePayload["previewRequireCollaboratorPermissions"])
+	}
+	labelsSwarm, ok := updatePayload["labelsSwarm"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing labelsSwarm in payload: %#v", updatePayload["labelsSwarm"])
+	}
+	if labelsSwarm["traefik.enable"] != "true" {
+		t.Fatalf("unexpected labelsSwarm payload: %#v", updatePayload["labelsSwarm"])
 	}
 }
 

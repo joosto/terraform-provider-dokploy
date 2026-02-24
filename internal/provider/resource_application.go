@@ -59,6 +59,7 @@ type ApplicationResourceModel struct {
 	PreviewEnv                            types.String `tfsdk:"preview_env"`
 	PreviewBuildArgs                      types.String `tfsdk:"preview_build_args"`
 	PreviewLabels                         types.List   `tfsdk:"preview_labels"`
+	Labels                                types.Map    `tfsdk:"labels"`
 	// GitHub Provider fields
 	GithubRepository types.String `tfsdk:"github_repository"`
 	GithubOwner      types.String `tfsdk:"github_owner"`
@@ -249,6 +250,10 @@ func (r *ApplicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				ElementType: types.StringType,
 				Optional:    true,
 			},
+			"labels": schema.MapAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+			},
 			"ports": schema.ListNestedAttribute{
 				Optional: true,
 				PlanModifiers: []planmodifier.List{
@@ -380,6 +385,17 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 			return
 		}
 	}
+	var labels map[string]string
+	if !plan.Labels.IsNull() && !plan.Labels.IsUnknown() {
+		diags = plan.Labels.ElementsAs(ctx, &labels, false)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if len(labels) == 0 {
+			labels = map[string]string{}
+		}
+	}
 
 	autoDeployConfigured := !plan.AutoDeploy.IsNull() && !plan.AutoDeploy.IsUnknown()
 	desiredAutoDeploy := false
@@ -431,6 +447,7 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 		PreviewEnv:                            optionalStringFromPlan(plan.PreviewEnv),
 		PreviewBuildArgs:                      optionalStringFromPlan(plan.PreviewBuildArgs),
 		PreviewLabels:                         previewLabels,
+		LabelsSwarm:                           labels,
 	}
 
 	createdApp, err := r.client.CreateApplication(app)
@@ -585,6 +602,7 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 			PreviewEnv:                            app.PreviewEnv,
 			PreviewBuildArgs:                      app.PreviewBuildArgs,
 			PreviewLabels:                         app.PreviewLabels,
+			LabelsSwarm:                           app.LabelsSwarm,
 		})
 		if err != nil {
 			resp.Diagnostics.AddWarning(
@@ -812,6 +830,23 @@ func (r *ApplicationResource) Read(ctx context.Context, req resource.ReadRequest
 			state.PreviewLabels = types.ListNull(types.StringType)
 		}
 	}
+	if !state.Labels.IsNull() {
+		if len(app.LabelsSwarm) > 0 {
+			labelsValue, labelsDiags := types.MapValueFrom(ctx, types.StringType, app.LabelsSwarm)
+			resp.Diagnostics.Append(labelsDiags...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			state.Labels = labelsValue
+		} else {
+			emptyLabels, labelsDiags := types.MapValueFrom(ctx, types.StringType, map[string]string{})
+			resp.Diagnostics.Append(labelsDiags...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			state.Labels = emptyLabels
+		}
+	}
 	// Don't read password back
 
 	// Optional GitHub Provider fields - only update if they were set in config
@@ -957,6 +992,17 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 			return
 		}
 	}
+	var labels map[string]string
+	if !plan.Labels.IsNull() && !plan.Labels.IsUnknown() {
+		diags = plan.Labels.ElementsAs(ctx, &labels, false)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if len(labels) == 0 {
+			labels = map[string]string{}
+		}
+	}
 
 	app := client.Application{
 		ID:                                    plan.ID.ValueString(),
@@ -989,6 +1035,7 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 		PreviewEnv:                            optionalStringFromPlan(plan.PreviewEnv),
 		PreviewBuildArgs:                      optionalStringFromPlan(plan.PreviewBuildArgs),
 		PreviewLabels:                         previewLabels,
+		LabelsSwarm:                           labels,
 	}
 
 	updatedApp, err := r.client.UpdateApplication(app)

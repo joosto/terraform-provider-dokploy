@@ -536,14 +536,15 @@ type Application struct {
 	Username           string `json:"username"`
 	Password           string `json:"password"`
 	// GitHub Provider fields
-	GithubRepository string   `json:"githubRepository"`
-	GithubOwner      string   `json:"owner"`
-	GithubBranch     string   `json:"githubBranch"`
-	GithubBuildPath  string   `json:"buildPath"`
-	GithubID         string   `json:"githubId"`
-	GithubWatchPaths []string `json:"watchPaths"`
-	EnableSubmodules bool     `json:"enableSubmodules"`
-	TriggerType      string   `json:"triggerType"`
+	GithubRepository string            `json:"githubRepository"`
+	GithubOwner      string            `json:"owner"`
+	GithubBranch     string            `json:"githubBranch"`
+	GithubBuildPath  string            `json:"buildPath"`
+	GithubID         string            `json:"githubId"`
+	GithubWatchPaths []string          `json:"watchPaths"`
+	EnableSubmodules bool              `json:"enableSubmodules"`
+	TriggerType      string            `json:"triggerType"`
+	LabelsSwarm      map[string]string `json:"labelsSwarm"`
 	// Preview deployment fields
 	IsPreviewDeploymentsActive            *bool    `json:"isPreviewDeploymentsActive"`
 	PreviewWildcard                       string   `json:"previewWildcard"`
@@ -624,6 +625,9 @@ func (c *DokployClient) CreateApplication(app Application) (*Application, error)
 	}
 	if app.Password != "" {
 		updatePayload["password"] = app.Password
+	}
+	if app.LabelsSwarm != nil {
+		updatePayload["labelsSwarm"] = app.LabelsSwarm
 	}
 	addPreviewApplicationPayload(updatePayload, app)
 
@@ -709,6 +713,9 @@ func (c *DokployClient) UpdateApplication(app Application) (*Application, error)
 	}
 	if app.Password != "" {
 		payload["password"] = app.Password
+	}
+	if app.LabelsSwarm != nil {
+		payload["labelsSwarm"] = app.LabelsSwarm
 	}
 
 	if app.EnvironmentID != "" {

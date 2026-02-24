@@ -42,6 +42,7 @@ description: |-
 - `github_repository` (String)
 - `github_watch_paths` (List of String)
 - `is_preview_deployments_active` (Boolean)
+- `labels` (Map of String)
 - `mounts` (Attributes List) (see [below for nested schema](#nestedatt--mounts))
 - `password` (String, Sensitive)
 - `ports` (Attributes List) (see [below for nested schema](#nestedatt--ports))
